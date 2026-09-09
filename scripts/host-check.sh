@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REQUIRED_COMMANDS=(bash git python3 curl make awk sed)
+readonly REQUIRED_COMMANDS=(
+    bash git python3 curl make awk sed rsync mmdebstrap qemu-riscv64-static
+    riscv64-linux-gnu-gcc dtc
+)
 missing=0
 
 for command_name in "${REQUIRED_COMMANDS[@]}"; do

@@ -1,0 +1,13 @@
+[Unit]
+Description=JH7110 first boot initialization
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+ConditionPathExists=!/var/lib/jh7110/firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/jh7110-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# Default desktop and a lightweight Wayland validation session.
+blueman
+chromium
+dbus-x11
+file-roller
+firefox-esr
+galculator
+gnome-disk-utility
+lightdm
+lightdm-gtk-greeter
+libreoffice
+mpv
+mousepad
+network-manager-gnome
+pavucontrol
+thunar
+vlc
+weston
+xfce4
+xfce4-goodies
+xfce4-screenshooter
+xfce4-taskmanager
+xwayland

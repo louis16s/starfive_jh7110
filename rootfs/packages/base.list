@@ -1,0 +1,41 @@
+# Debian Trixie base and first-boot/runtime services.
+ca-certificates
+cloud-guest-utils
+dbus
+e2fsprogs
+locales
+network-manager
+openssh-server
+parted
+policykit-1
+sudo
+systemd
+systemd-sysv
+systemd-timesyncd
+tzdata
+udev
+zram-tools
+
+# Filesystems, networking and hardware access.
+dosfstools
+exfatprogs
+fuse3
+iproute2
+nftables
+cifs-utils
+ntfs-3g
+samba-client
+podman
+slirp4netns
+uidmap
+fuse-overlayfs
+usbutils
+wireguard-tools
+
+# Audio and Bluetooth plumbing.
+alsa-utils
+bluez
+pipewire
+pipewire-pulse
+pulseaudio-utils
+wireplumber

@@ -3,7 +3,7 @@ SHELL := /bin/bash
 BOARD ?= visionfive2
 BUILD_TYPE ?= release
 
-.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi image
+.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi rootfs image
 
 check:
 	./scripts/validate-profile.sh "$(BOARD)"
@@ -30,6 +30,9 @@ uboot:
 
 opensbi:
 	./scripts/build-opensbi.sh "$(BOARD)"
+
+rootfs:
+	./scripts/build-rootfs.sh "$(BOARD)"
 
 image:
 	@echo "image build is scheduled for Phase 5; run 'make BOARD=$(BOARD) check' for Phase 2 validation" >&2

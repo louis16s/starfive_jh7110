@@ -29,6 +29,7 @@ source "$profile"
 [[ -n "${KERNEL_DEFCONFIG:-}" ]] || die "KERNEL_DEFCONFIG is empty"
 [[ -n "${UBOOT_SOURCE:-}" ]] || die "UBOOT_SOURCE is empty"
 [[ -n "${OPENSBI_SOURCE:-}" ]] || die "OPENSBI_SOURCE is empty"
+[[ -n "${TIMEZONE:-}" ]] || die "TIMEZONE is empty"
 if [[ "$board" == mars && "${MARS_DTB_ALLOWED:-0}" != 1 ]]; then
     die "Mars board separation flag is invalid"
 fi

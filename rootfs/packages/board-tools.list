@@ -1,0 +1,12 @@
+# Board bring-up and peripheral tools.
+ethtool
+gpiod
+i2c-tools
+lm-sensors
+mmc-utils
+minicom
+nvme-cli
+pciutils
+picocom
+screen
+smartmontools

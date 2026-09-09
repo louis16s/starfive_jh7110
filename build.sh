@@ -4,18 +4,23 @@ set -Eeuo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./build.sh BOARD [check|profile|verify-sources|host-check|image]
+  ./build.sh BOARD [check|profile|verify-sources|host-check|fetch|kernel|uboot|opensbi|rootfs|image]
 
 Boards:
   visionfive2   StarFive VisionFive 2 8GB
   mars          Milk-V Mars 8GB
   all           Validate both board profiles
 
-Phase 2 commands:
+Phase 4 commands:
   check           Validate profile, host prerequisites and locked sources
   profile         Validate only the board profile and capability matrix
   verify-sources  Resolve every Git source and compare its locked commit
   host-check      Check the x86_64 build host prerequisites
+  fetch           Fetch the exact locked kernel/U-Boot/OpenSBI sources
+  kernel          Build the locked BSP kernel (requires the cross toolchain)
+  uboot           Build the board-selected U-Boot (requires the cross toolchain)
+  opensbi         Build the board-selected OpenSBI (requires the cross toolchain)
+  rootfs          Build the Debian Trixie riscv64 directory rootfs
   image           Reserved for the Phase 5 image builder
 EOF
 }

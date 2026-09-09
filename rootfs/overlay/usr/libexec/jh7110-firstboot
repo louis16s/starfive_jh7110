@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly STATE_DIR=/var/lib/jh7110
+readonly BOARD_CONFIG=/etc/jh7110/board.conf
+
+die() {
+    echo "jh7110-firstboot: $*" >&2
+    exit 1
+}
+
+[[ $(id -u) -eq 0 ]] || die "must run as root"
+[[ -r "$BOARD_CONFIG" ]] || die "missing $BOARD_CONFIG"
+# shellcheck source=/dev/null
+source "$BOARD_CONFIG"
+
+install -d -m 0755 "$STATE_DIR"
+
+if [[ -n "${BOARD_ID:-}" && "$BOARD_ID" != unconfigured ]]; then
+    hostnamectl set-hostname "jh7110-$BOARD_ID"
+else
+    die "invalid board configuration"
+fi
+
+if [[ ! -s /etc/machine-id ]]; then
+    systemd-machine-id-setup
+fi
+
+ssh-keygen -A
+
+if command -v locale-gen >/dev/null 2>&1; then
+    locale-gen en_US.UTF-8 zh_CN.UTF-8
+fi
+
+root_source=$(findmnt --noheadings --output SOURCE /)
+if [[ -b "$root_source" ]] && command -v growpart >/dev/null 2>&1; then
+    parent_device=$(lsblk --noheadings --output PKNAME "$root_source" | awk 'NF { print "/dev/" $1; exit }')
+    partition_number=$(lsblk --noheadings --output PARTNUM "$root_source" | awk 'NF { print; exit }')
+    if [[ -n "$parent_device" && -n "$partition_number" ]]; then
+        if growpart "$parent_device" "$partition_number"; then
+            :
+        else
+            growpart_status=$?
+            [[ "$growpart_status" -eq 1 ]] || die "growpart failed with status $growpart_status"
+        fi
+    fi
+fi
+systemd-growfs / || die "could not grow the root filesystem"
+
+if command -v jh7110-info >/dev/null 2>&1; then
+    jh7110-info > "$STATE_DIR/hardware-report.firstboot.txt"
+fi
+
+touch "$STATE_DIR/firstboot.done"
+systemctl disable jh7110-firstboot.service

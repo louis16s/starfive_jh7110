@@ -41,6 +41,21 @@ make BOARD=visionfive2 kernel
 
 Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
 
+## Phase 4 Debian rootfs
+
+The rootfs builder uses the Debian Trixie snapshot recorded in `configs/common.conf` and installs the same package manifests for both boards. Board identity is written separately to `/etc/jh7110/board.conf`; no VisionFive 2 DTB or board-specific rootfs is reused for Mars.
+
+The Linux build host must provide `mmdebstrap`, `qemu-riscv64-static`, `rsync`, the `riscv64-linux-gnu` cross compiler and `dtc`:
+
+```sh
+make BOARD=visionfive2 rootfs
+make BOARD=mars rootfs
+```
+
+The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `jh7110` sudo-capable account, and installs `jh7110-firstboot.service`. The first-boot service sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
+
+The image assembler is not enabled yet: it will consume this directory rootfs only after kernel, DTB, OpenSBI and board-labelled U-Boot artifacts have been validated.
+
 ## Planned build entry points
 
 After Phase 3–5, these commands will become enabled:
