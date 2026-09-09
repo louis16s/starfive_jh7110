@@ -53,5 +53,7 @@ done
 dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
 [[ -f "$dtb_path" ]] || die "kernel build did not produce $KERNEL_DTB"
 
-kernel_release=$(make -s -C "$kernel_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" kernelrelease)
+kernel_release_file="$output_dir/include/config/kernel.release"
+[[ -s "$kernel_release_file" ]] || die "kernel release file is missing: $kernel_release_file"
+kernel_release=$(<"$kernel_release_file")
 printf 'kernel build complete: %s (%s), packages: %s\n' "$board" "$kernel_release" "$package_dir"

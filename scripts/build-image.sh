@@ -38,7 +38,9 @@ if [[ -n "${INITRD_PATH:-}" ]]; then
 fi
 [[ ${#initrds[@]} -eq 1 && -f "${initrds[0]}" ]] || die "exactly one initrd is required; set INITRD_PATH or install a kernel package into the rootfs"
 
-kernel_release=$(make -s -C "$REPO_ROOT/$SOURCE_ROOT/$KERNEL_SOURCE" O="$kernel_dir" ARCH=riscv CROSS_COMPILE="${CROSS_COMPILE:-riscv64-linux-gnu-}" kernelrelease)
+kernel_release_file="$kernel_dir/include/config/kernel.release"
+[[ -s "$kernel_release_file" ]] || die "kernel release file is missing: $kernel_release_file"
+kernel_release=$(<"$kernel_release_file")
 mkdir -p "$image_dir"
 [[ ! -e "$image_path" ]] || die "output exists: $image_path; remove it explicitly before rebuilding"
 truncate -s "$((IMAGE_SIZE_MIB * 1024 * 1024))" "$image_path"
