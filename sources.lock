@@ -1,0 +1,186 @@
+schema: 1
+project: jh7110-desktop
+locked_at: 2026-09-09
+target_arch: riscv64
+
+# Phase 1 is a source and feasibility lock.  Entries marked planned are
+# recorded for later phases but are not downloaded by the Phase 1 worktree.
+# No build is allowed to resolve a branch or tag without checking the commit.
+
+sources:
+  starfive_sdk:
+    name: StarFive VisionFive2 SDK
+    url: https://github.com/starfive-tech/VisionFive2.git
+    ref: JH7110_VF2_6.12_v6.0.0
+    commit: 7f1bacc7c3969ea7ae7da4b9f3ca3fbd6e39c142
+    role: stable-bsp-baseline
+    license: repository-and-component-specific
+    notes: >-
+      Release tag for the official JH7110 SDK v6.0.0.  The tag is annotated;
+      the commit is the peeled commit recorded here.
+
+  starfive_buildroot:
+    name: StarFive Buildroot submodule from VisionFive2 v6.0.0
+    url: https://github.com/starfive-tech/buildroot.git
+    ref: JH7110_VisionFive2_devel
+    commit: 70e7c10de57195237ee4ae95f3c87637a39429b0
+    role: reference-only
+    license: GPL-2.0-or-later
+
+  starfive_linux_6_12:
+    name: StarFive Linux BSP
+    url: https://github.com/starfive-tech/linux.git
+    ref: JH7110_VisionFive2_6.12.y_devel
+    commit: 4cecf169f38eb94b40e307f5f870055e4d9d64f1
+    role: stable-bsp-kernel
+    license: GPL-2.0-only
+    notes: >-
+      Contains the StarFive JH7110 6.12 BSP DTS, display, PVR and vendor
+      multimedia integration used as the Phase 1 functionality baseline.
+
+  starfive_uboot:
+    name: StarFive U-Boot BSP
+    url: https://github.com/starfive-tech/u-boot.git
+    ref: JH7110_VisionFive2_devel
+    commit: c4c67bb66ae6f41c98537d18cf5c3abc8b97b8e4
+    role: stable-bsp-bootloader-reference
+    license: GPL-2.0-only
+    notes: >-
+      Vendor branch contains the VisionFive 2 board implementation.  Mars
+      bootloader separation remains a Phase 3 integration task.
+
+  starfive_opensbi:
+    name: StarFive OpenSBI BSP submodule from VisionFive2 v6.0.0
+    url: https://github.com/starfive-tech/opensbi.git
+    ref: JH7110_VisionFive2_devel
+    commit: 1725bd71080960290fdde4499a58c25c09d5c8ee
+    role: stable-bsp-firmware
+    license: BSD-2-Clause
+
+  starfive_soft_3rdpart:
+    name: StarFive JH7110 third-party software
+    url: https://github.com/starfive-tech/soft_3rdpart.git
+    ref: JH7110_VisionFive2_devel
+    commit: b60da16be1b36453aa46599889c28310fd148fb8
+    role: stable-bsp-gpu-vpu-reference
+    license: mixed-and-component-specific
+    notes: >-
+      Contains vendor Wave511/Wave420L/CodaJ12 software, IMG GPU payloads and
+      other binaries.  Nothing from this source may be redistributed until
+      each component license is recorded and accepted.
+
+  starfive_pvr_ddk_1_19:
+    name: StarFive IMG GPU DDK binary payload
+    url: https://github.com/starfive-tech/soft_3rdpart/blob/b60da16be1b36453aa46599889c28310fd148fb8/IMG_GPU/out/img-gpu-powervr-bin-1.19.6345021.tar.gz
+    ref: 1.19.6345021
+    commit: b60da16be1b36453aa46599889c28310fd148fb8
+    role: stable-bsp-gpu-candidate
+    license: proprietary-license-review-required
+    sha256: 9dcaf2084b13e59c4e50a4a288f5de56f8e9ee631627a3e818591675bf61311a
+    notes: >-
+      The Git LFS object is 57,719,888 bytes.  The repository README states
+      that IMG_GPU is binary and not open source.
+
+  milkv_mars_sdk:
+    name: Milk-V Mars official Buildroot SDK
+    url: https://github.com/milkv-mars/mars-buildroot-sdk.git
+    ref: dev
+    commit: 1fd6bac9f2efde47fbb8afd28d2903c49f893e3f
+    role: mars-reference-only
+    license: repository-and-component-specific
+    notes: >-
+      Official SDK is a useful board and boot reference, but its README and
+      generated files describe a Linux 5.15-era Buildroot/FIT flow.  It is not
+      the Debian/Trixie build base.
+
+  linux_upstream:
+    name: Upstream Linux comparison snapshot
+    url: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+    ref: master
+    commit: 893e11787f78e43b534e252249ac3fff4d1333f8
+    role: mainline-experimental-reference
+    license: GPL-2.0-only
+
+  uboot_upstream:
+    name: Upstream U-Boot comparison snapshot
+    url: https://source.denx.de/u-boot/u-boot.git
+    ref: master
+    commit: ece349ade2973e220f524ce59e59711cc919263f
+    role: mainline-experimental-reference
+    license: GPL-2.0-or-later
+    notes: >-
+      Upstream documentation says Mars uses the VisionFive 2 U-Boot binaries
+      with board detection and DT selection.  The project will still produce
+      board-labelled and separately tested artifacts.
+
+  opensbi_upstream:
+    name: Upstream OpenSBI comparison snapshot
+    url: https://github.com/riscv-software-src/opensbi.git
+    ref: master
+    commit: 3593a5facc4c6938b90429a6973ba9ee21fc5899
+    role: mainline-experimental-reference
+    license: BSD-2-Clause
+
+  mesa_upstream:
+    name: Mesa stable tag for comparison
+    url: https://gitlab.freedesktop.org/mesa/mesa.git
+    ref: mesa-26.2.2
+    commit: 997191be71afdb2234fa6a7275bfb8475c22250f
+    role: mainline-experimental-reference
+    license: MIT-and-component-specific
+    notes: >-
+      Mesa documentation lists BXE-4-32 BVNC 36.50.54.182 as unsupported and
+      not under active development.  This tag is not the stable GPU runtime.
+
+  ffmpeg_upstream:
+    name: FFmpeg stable tag for future VPU integration
+    url: https://git.ffmpeg.org/ffmpeg.git
+    ref: n9.0.1
+    commit: 501bb49457b9dfb25d6a208832e0a6e6cd53108d
+    role: planned-phase-8
+    license: LGPL-2.1-or-later-or-GPL-2.0-or-later
+
+  gstreamer_upstream:
+    name: GStreamer stable tag for future VPU integration
+    url: https://gitlab.freedesktop.org/gstreamer/gstreamer.git
+    ref: 1.29.2
+    commit: dc05e38bade289e45830cf3c58498a50ad958554
+    role: planned-phase-8
+    license: LGPL-2.1-or-later
+
+debian:
+  suite: trixie
+  version: 13.6
+  architecture: riscv64
+  archive_snapshot:
+    uri: https://snapshot.debian.org/archive/debian/20260908T202514Z/
+    release_sha256: record-during-build
+  security_snapshot:
+    uri: https://snapshot.debian.org/archive/debian-security/20260908T202523Z/
+    release_sha256: record-during-build
+  policy: >-
+    The image builder must use deb822 sources and verify the Release metadata;
+    changing the snapshot requires a new lock update and build manifest.
+
+hardware_documents:
+  visionfive2_datasheet:
+    url: https://doc-en.rvspace.org/VisionFive2/PDF/VisionFive2_Datasheet.pdf
+    role: board-capability-evidence
+  visionfive2_release_notes:
+    url: https://github.com/starfive-tech/VisionFive2/releases/tag/JH7110_VF2_6.12_v6.0.0
+    role: BSP-feature-and-known-issues-evidence
+  milkv_mars_overview:
+    url: https://milkv.io/docs/mars/overview
+    role: board-capability-evidence
+  milkv_mars_boot:
+    url: https://milkv.io/docs/mars/getting-started/boot
+    role: boot-media-evidence
+  milkv_mars_hardware_docs:
+    url: https://milkv.io/docs/mars/getting-started/hardware
+    role: schematic-evidence
+  linux_mars_dts:
+    url: https://github.com/torvalds/linux/blob/master/arch/riscv/boot/dts/starfive/jh7110-milkv-mars.dts
+    role: upstream-board-dts-evidence
+  uboot_mars_board_doc:
+    url: https://source.denx.de/u-boot/u-boot/-/blob/master/doc/board/starfive/milk-v_mars.rst
+    role: upstream-bootloader-evidence
