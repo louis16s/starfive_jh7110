@@ -29,6 +29,7 @@ podman
 slirp4netns
 uidmap
 fuse-overlayfs
+initramfs-tools
 usbutils
 wireguard-tools
 

@@ -1,0 +1,46 @@
+name: Release JH7110 Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      board: all
+      build_type: release
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download VisionFive 2 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: jh7110-desktop-visionfive2-release
+          path: release/visionfive2
+
+      - name: Download Mars artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: jh7110-desktop-mars-release
+          path: release/mars
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/visionfive2/**/*.img.xz
+            release/visionfive2/**/*.sha256
+            release/visionfive2/**/*.deb
+            release/visionfive2/**/build-manifest.txt
+            release/mars/**/*.img.xz
+            release/mars/**/*.sha256
+            release/mars/**/*.deb
+            release/mars/**/build-manifest.txt

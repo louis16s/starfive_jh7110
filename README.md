@@ -5,7 +5,7 @@ Reproducible Debian Trixie desktop image engineering for:
 * StarFive VisionFive 2 8GB (`visionfive2`)
 * Milk-V Mars 8GB (`mars`)
 
-The project is currently at Phase 4. Phase 1 research and locked source decisions are in [`docs/research.md`](docs/research.md), [`docs/architecture.md`](docs/architecture.md), and [`sources.lock`](sources.lock). Phase 3 provides locked source checkout and BSP build entry points; Phase 4 provides the Debian rootfs builder. Hardware image assembly remains intentionally gated until the boot artifacts are validated on both boards.
+The project is currently at the Phase 5/CI foundation. Phase 1 research and locked source decisions are in [`docs/research.md`](docs/research.md), [`docs/architecture.md`](docs/architecture.md), and [`sources.lock`](sources.lock). Phase 3 provides locked source checkout and BSP build entry points; Phase 4 provides the Debian rootfs builder; Phase 5 provides board-specific GPT image assembly. Hardware validation and vendor GPU/VPU integration remain explicit gates.
 
 ## Current commands
 

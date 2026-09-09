@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./build.sh BOARD [check|profile|verify-sources|host-check|fetch|kernel|uboot|opensbi|rootfs|image]
+  ./build.sh BOARD [check|profile|verify-sources|host-check|fetch|kernel|uboot|opensbi|rootfs|install-kernel|image|compress|manifest]
 
 Boards:
   visionfive2   StarFive VisionFive 2 8GB
@@ -21,6 +21,9 @@ Phase 4 commands:
   uboot           Build the board-selected U-Boot (requires the cross toolchain)
   opensbi         Build the board-selected OpenSBI (requires the cross toolchain)
   rootfs          Build the Debian Trixie riscv64 directory rootfs
+  install-kernel  Extract the built kernel package and generate the initrd
+  compress        Compress the assembled image and write a SHA256 file
+  manifest        Write the build manifest and artifact hashes
   image           Assemble the GPT boot/root image (run as root)
 EOF
 }

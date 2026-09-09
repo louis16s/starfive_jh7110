@@ -69,6 +69,10 @@ sudo INITRD_PATH=/absolute/path/to/initrd.img make BOARD=mars image
 
 The script refuses to assemble an image when the board DTB, kernel Image or initrd is missing. It writes the root partition PARTUUID into both `fstab` and `extlinux.conf`, so the image is not tied to `/dev/mmcblk*` naming.
 
+## CI and releases
+
+`.github/workflows/build.yml` uses Ubuntu 24.04 x86_64, caches the locked source checkouts, builds each selected board independently, and uploads the compressed image, kernel `.deb` files and manifest. `.github/workflows/release.yml` invokes the same reusable build on `v*` tags and publishes both board artifacts. The workflow does not download or redistribute the proprietary PVR/VPU payload; those packages remain a separate license-approved integration step.
+
 ## Planned build entry points
 
 After Phase 3–5, these commands will become enabled:

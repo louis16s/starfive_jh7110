@@ -1,0 +1,116 @@
+name: Build JH7110 Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: Board profile to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - visionfive2
+          - mars
+      build_type:
+        description: Build profile
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - debug
+  workflow_call:
+    inputs:
+      board:
+        required: false
+        default: all
+        type: string
+      build_type:
+        required: false
+        default: release
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.board }}
+    if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - visionfive2
+          - mars
+    env:
+      BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache locked source checkouts
+        uses: actions/cache@v4
+        with:
+          path: sources
+          key: ${{ runner.os }}-${{ matrix.board }}-sources-${{ hashFiles('sources.lock') }}
+
+      - name: Cache Debian and compiler downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt/archives
+            ~/.cache/ccache
+          key: ${{ runner.os }}-apt-ccache-${{ hashFiles('sources.lock') }}
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison binfmt-support build-essential ccache cifs-utils \
+            device-tree-compiler dosfstools dwarves flex gdisk \
+            initramfs-tools libelf-dev libncurses-dev libssl-dev \
+            mmdebstrap mount qemu-user-static rsync shellcheck \
+            gcc-riscv64-linux-gnu python3-yaml swig u-boot-tools \
+            util-linux xz-utils
+          sudo update-binfmts --enable
+
+      - name: Validate profile and lock
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} check
+
+      - name: Fetch locked BSP sources
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} fetch
+
+      - name: Build OpenSBI, U-Boot and kernel packages
+        run: |
+          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} opensbi
+          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} uboot
+          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} kernel
+
+      - name: Build Debian Trixie rootfs
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} rootfs
+
+      - name: Install kernel package and generate initrd
+        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} install-kernel
+
+      - name: Assemble and package image
+        run: |
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} image
+          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} compress
+          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} manifest
+
+      - name: Run shellcheck
+        run: shellcheck --severity=error scripts/*.sh build.sh board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jh7110-desktop-${{ matrix.board }}-${{ env.BUILD_TYPE }}
+          if-no-files-found: error
+          path: |
+            build/${{ matrix.board }}/image/*.img.xz
+            build/${{ matrix.board }}/image/*.img.xz.sha256
+            build/${{ matrix.board }}/packages/*.deb
+            build/${{ matrix.board }}/build-manifest.txt

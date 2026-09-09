@@ -3,7 +3,7 @@ SHELL := /bin/bash
 BOARD ?= visionfive2
 BUILD_TYPE ?= release
 
-.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi rootfs image
+.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi rootfs install-kernel image compress manifest
 
 check:
 	./scripts/validate-profile.sh "$(BOARD)"
@@ -34,5 +34,14 @@ opensbi:
 rootfs:
 	./scripts/build-rootfs.sh "$(BOARD)"
 
+install-kernel:
+	./scripts/install-kernel-into-rootfs.sh "$(BOARD)"
+
 image:
 	./scripts/build-image.sh "$(BOARD)"
+
+compress:
+	./scripts/compress-image.sh "$(BOARD)"
+
+manifest:
+	./scripts/generate-manifest.sh "$(BOARD)"
