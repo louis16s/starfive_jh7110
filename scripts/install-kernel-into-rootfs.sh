@@ -36,11 +36,21 @@ kernel_release_file="$kernel_dir/include/config/kernel.release"
 kernel_release=$(<"$kernel_release_file")
 target_loader="$rootfs_dir/usr/lib/ld-linux-riscv64-lp64d.so.1"
 compat_loader="$rootfs_dir/lib/ld-linux-riscv64-lp64d.so.1"
-[[ -f "$target_loader" ]] || die "riscv64 dynamic loader is missing: $target_loader"
-if [[ ! -e "$compat_loader" ]]; then
-    install -d -m 0755 "$rootfs_dir/lib"
-    ln -s ../usr/lib/ld-linux-riscv64-lp64d.so.1 "$compat_loader"
+if [[ ! -f "$target_loader" ]]; then
+    target_loader=$(find "$rootfs_dir/usr/lib" "$rootfs_dir/lib" \
+        -type f -name 'ld-linux-riscv64*.so*' -print -quit 2>/dev/null || true)
 fi
+[[ -n "$target_loader" && -f "$target_loader" ]] \
+    || die "riscv64 dynamic loader is missing from $rootfs_dir"
+install -d -m 0755 "$rootfs_dir/lib"
+if [[ ! -e "$compat_loader" ]]; then
+    [[ ! -L "$compat_loader" ]] || rm -f "$compat_loader"
+    compat_target=$(realpath --relative-to="$rootfs_dir/lib" "$target_loader")
+    ln -s "$compat_target" "$compat_loader"
+fi
+[[ -e "$compat_loader" ]] || die "could not provide $compat_loader"
+printf 'install-kernel: riscv64 loader %s -> %s\n' \
+    "$target_loader" "$(readlink -f "$compat_loader")"
 
 printf 'install-kernel: extracting %s\n' "${image_packages[0]}"
 dpkg-deb --extract "${image_packages[0]}" "$rootfs_dir"
@@ -56,9 +66,10 @@ install -m 0755 "$qemu_path" "$rootfs_dir/usr/bin/qemu-riscv64-static"
 # Invoke the target command through the copied static emulator explicitly.
 # Debian Trixie stores the riscv64 loader in /usr/lib on merged-/usr systems,
 # while the ELF interpreter name remains /lib/ld-linux-riscv64-lp64d.so.1.
-# The /usr loader prefix keeps this invocation independent of host binfmt.
+# The rootfs loader prefix makes /lib in the target ELF interpreter resolve
+# inside the chroot, independent of the host binfmt registration.
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
-chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
