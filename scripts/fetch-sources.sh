@@ -34,10 +34,9 @@ for name in names:
 
     destination = os.path.join(source_root, name)
     if not os.path.isdir(os.path.join(destination, ".git")):
-        subprocess.run(
-            ["git", "clone", "--no-checkout", "--no-tags", "--filter=blob:none", url, destination],
-            check=True,
-        )
+        os.makedirs(destination, exist_ok=True)
+        subprocess.run(["git", "-C", destination, "init"], check=True)
+        subprocess.run(["git", "-C", destination, "remote", "add", "origin", url], check=True)
     subprocess.run(["git", "-C", destination, "fetch", "--no-tags", "origin", commit], check=True)
     subprocess.run(["git", "-C", destination, "checkout", "--detach", commit], check=True)
     actual = subprocess.check_output(
