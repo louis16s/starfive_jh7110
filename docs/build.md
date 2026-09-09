@@ -77,6 +77,33 @@ The script refuses to assemble an image when the board DTB, kernel Image or init
 
 ## Build entry points
 
+### CI performance
+
+The failed run 34366689840 spent 6.7–8.8 minutes fetching sources,
+12.6–13.8 minutes building bootloaders/kernel packages, and 11.5–12.8 minutes
+building each rootfs. These are baseline measurements, not promised savings.
+
+CI now saves locked source checkouts immediately after fetching and saves a
+separate 1 GiB compiler cache per board before starting the rootfs. Kernel,
+U-Boot and OpenSBI explicitly invoke ccache when `USE_CCACHE=1`; local builds
+default to the compiler directly. Compiler content checking protects against
+toolchain changes. A unique cache key per run allows new objects to be saved,
+with prefix fallback to a previous cache. Cache statistics are printed after
+compilation; compare warm-run timings with the baseline to measure benefit.
+
+Single-board requests allocate only that board's job. Both boards remain
+parallel for `all`. The unused standalone modules installation was removed;
+`bindeb-pkg` still stages modules into the Debian image package. Uploads use
+compression level zero because image and package payloads are already compressed.
+
+The rootfs is still independently built under QEMU for each board. Sharing a
+pristine rootfs and identical kernel outputs is a further optimization, but
+requires separate artifact handoff and cache invalidation for package manifests,
+snapshot, overlays, configuration and build scripts. Full rootfs caching has
+not been enabled, so stale board identity and packages cannot bypass construction.
+The `debug` input currently labels the build; it does not yet select a distinct
+kernel debug configuration.
+
 ```sh
 ./build.sh visionfive2 image
 ./build.sh mars image

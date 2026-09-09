@@ -41,28 +41,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board:
-          - visionfive2
-          - mars
+        board: ${{ fromJSON(inputs.board == 'visionfive2' && '["visionfive2"]' || inputs.board == 'mars' && '["mars"]' || '["visionfive2","mars"]') }}
     env:
       BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+      USE_CCACHE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 1G
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Cache locked source checkouts
-        uses: actions/cache@v4
+        id: sources-cache
+        uses: actions/cache/restore@v4
         with:
           path: sources
           key: ${{ runner.os }}-${{ matrix.board }}-sources-${{ hashFiles('sources.lock') }}
 
-      - name: Cache Debian and compiler downloads
-        uses: actions/cache@v4
+      - name: Restore compiler cache
+        id: compiler-cache
+        uses: actions/cache/restore@v4
         with:
-          path: |
-            /var/cache/apt/archives
-            ~/.cache/ccache
-          key: ${{ runner.os }}-apt-ccache-${{ hashFiles('sources.lock') }}
+          path: ${{ env.CCACHE_DIR }}
+          key: ubuntu-24.04-${{ runner.arch }}-${{ matrix.board }}-ccache-v1-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ubuntu-24.04-${{ runner.arch }}-${{ matrix.board }}-ccache-v1-${{ inputs.build_type }}-
 
       - name: Install host dependencies
         run: |
@@ -76,10 +81,12 @@ jobs:
             gcc-riscv64-linux-gnu python3-yaml swig u-boot-tools \
             util-linux xz-utils
           sudo update-binfmts --enable
+          ccache --zero-stats
+          ccache --show-config
 
       - name: Validate profile and lock
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} check
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" check
 
       - name: Run shellcheck
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
@@ -87,29 +94,48 @@ jobs:
 
       - name: Fetch locked BSP sources
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} fetch
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" fetch
+
+      - name: Save fetched sources before compilation
+        if: steps.sources-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: sources
+          key: ${{ steps.sources-cache.outputs.cache-primary-key }}
 
       - name: Build OpenSBI, U-Boot and kernel packages
+        id: compile
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
-          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} opensbi
-          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} uboot
-          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} kernel
+          make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" opensbi
+          make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" uboot
+          make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" kernel
+
+      - name: Report compiler cache statistics
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        run: ccache --show-stats --verbose
+
+      - name: Save compiler cache before rootfs build
+        if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Build Debian Trixie rootfs
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} rootfs
+        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" rootfs
 
       - name: Install kernel package and generate initrd
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} install-kernel
+        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" install-kernel
 
       - name: Assemble and package image
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
-          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} image
-          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} compress
-          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} manifest
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" image
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" compress
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" manifest
 
       - name: Upload build artifacts
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
@@ -117,6 +143,7 @@ jobs:
         with:
           name: jh7110-desktop-${{ matrix.board }}-${{ env.BUILD_TYPE }}
           if-no-files-found: error
+          compression-level: 0
           path: |
             build/${{ matrix.board }}/image/*.img.xz
             build/${{ matrix.board }}/image/*.img.xz.sha256

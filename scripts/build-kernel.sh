@@ -22,18 +22,22 @@ jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 [[ -d "$kernel_source" ]] || die "missing source; run make BOARD=$board fetch"
 command -v "${cross_compile}gcc" >/dev/null 2>&1 || die "missing ${cross_compile}gcc"
 command -v make >/dev/null 2>&1 || die "missing make"
+compiler="${cross_compile}gcc"
+if [[ "${USE_CCACHE:-0}" == 1 ]]; then
+    command -v ccache >/dev/null 2>&1 || die "USE_CCACHE=1 requires ccache"
+    compiler="ccache $compiler"
+fi
 
 mkdir -p "$output_dir"
 kernel_make() {
     env -u BOARD -u BUILD_TYPE -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES \
         make -C "$kernel_source" O="$output_dir" ARCH=riscv \
-        CROSS_COMPILE="$cross_compile" "$@"
+        CROSS_COMPILE="$cross_compile" CC="$compiler" "$@"
 }
 
 kernel_make "$KERNEL_DEFCONFIG"
 kernel_make olddefconfig
 kernel_make -j"$jobs" Image modules dtbs
-kernel_make INSTALL_MOD_PATH="$output_dir/modules" modules_install
 
 package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 package_output_root="$REPO_ROOT/$OUTPUT_ROOT/$board"

@@ -65,7 +65,7 @@ chmod 0755 "$rootfs_dir/usr/libexec/jh7110-firstboot"
 install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
 BOARD_ID=$BOARD_ID
-BOARD_NAME=$BOARD_NAME
+BOARD_NAME='$BOARD_NAME'
 EOF
 printf '%s\n' "$TIMEZONE" > "$rootfs_dir/etc/timezone"
 ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$rootfs_dir/etc/localtime"

@@ -26,6 +26,11 @@ jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 [[ -d "$uboot_source" ]] || die "missing source; run make BOARD=$board fetch"
 [[ -f "$opensbi_image" ]] || die "missing OpenSBI image: run make BOARD=$board opensbi"
 command -v "${cross_compile}gcc" >/dev/null 2>&1 || die "missing ${cross_compile}gcc"
+compiler="${cross_compile}gcc"
+if [[ "${USE_CCACHE:-0}" == 1 ]]; then
+    command -v ccache >/dev/null 2>&1 || die "USE_CCACHE=1 requires ccache"
+    compiler="ccache $compiler"
+fi
 
 if [[ "$board" == mars ]]; then
     grep -q 'jh7110-milkv-mars' "$uboot_source/configs/starfive_visionfive2_defconfig" \
@@ -41,7 +46,7 @@ mkdir -p "$output_dir"
 uboot_make() {
     env -u BOARD -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES \
         make -C "$uboot_source" O="$output_dir" ARCH=riscv \
-        CROSS_COMPILE="$cross_compile" OPENSBI="$opensbi_image" "$@"
+        CROSS_COMPILE="$cross_compile" CC="$compiler" OPENSBI="$opensbi_image" "$@"
 }
 
 uboot_make "$UBOOT_DEFCONFIG"
