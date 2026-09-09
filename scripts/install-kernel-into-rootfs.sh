@@ -42,7 +42,10 @@ cleanup() {
 }
 trap cleanup EXIT
 install -m 0755 "$qemu_path" "$rootfs_dir/usr/bin/qemu-riscv64-static"
-chroot "$rootfs_dir" /usr/bin/env -i \
+# Invoke the target command through the copied static emulator explicitly.
+# This avoids the host binfmt-P wrapper resolving the target loader against
+# the build host instead of the chroot's riscv64 libc.
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
