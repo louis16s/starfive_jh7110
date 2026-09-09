@@ -59,6 +59,9 @@ mmdebstrap \
     --include="$include_list" \
     "$DEBIAN_SUITE" "$rootfs_dir" "$snapshot"
 
+rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
+chmod 0755 "$rootfs_dir/usr/libexec/jh7110-firstboot"
+
 install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
 BOARD_ID=$BOARD_ID
@@ -85,14 +88,16 @@ Check-Valid-Until: no
 EOF
 rm -f "$rootfs_dir/etc/apt/sources.list"
 
-rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
-chmod 0755 "$rootfs_dir/usr/libexec/jh7110-firstboot"
-
 install -d -m 0755 "$rootfs_dir/etc/systemd/system/multi-user.target.wants"
 ln -s ../jh7110-firstboot.service \
     "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-firstboot.service"
 
-install -m 0755 "$(command -v qemu-riscv64-static)" "$rootfs_dir/usr/bin/qemu-riscv64-static"
+qemu_target="$rootfs_dir/usr/bin/qemu-riscv64-static"
+cleanup_qemu() {
+    rm -f "$qemu_target"
+}
+trap cleanup_qemu EXIT
+install -m 0755 "$(command -v qemu-riscv64-static)" "$qemu_target"
 chroot "$rootfs_dir" /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
@@ -103,12 +108,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
         useradd --create-home --shell /bin/bash --groups sudo,audio,video,input,plugdev,netdev jh7110
         passwd --lock jh7110
-        systemctl enable NetworkManager systemd-timesyncd ssh lightdm
         systemctl preset-all
+        systemctl enable NetworkManager systemd-timesyncd ssh lightdm
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
-        rm -f /usr/bin/qemu-riscv64-static
         apt-get clean
     '
+cleanup_qemu
+trap - EXIT
 
 printf 'rootfs build complete: %s\n' "$rootfs_dir"

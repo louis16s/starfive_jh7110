@@ -15,9 +15,12 @@ The project is currently at the Phase 5/CI foundation. Phase 1 research and lock
 ./build.sh all check
 ./build.sh visionfive2 rootfs
 ./build.sh mars rootfs
+./build.sh visionfive2 install-kernel
+./build.sh visionfive2 image
+./build.sh visionfive2 compress
 ```
 
-These commands validate board profiles, the capability matrix, host prerequisites and the locked source references. Image creation is intentionally not enabled until the Phase 3 kernel/bootloader packages are implemented and tested.
+The commands validate board profiles and locked sources, build pinned boot and kernel sources, create the common Debian rootfs, install the packaged kernel, and assemble the board-specific image. The resulting images are CI build candidates; hardware acceptance remains pending until the board test matrix is executed.
 
 ## Status
 

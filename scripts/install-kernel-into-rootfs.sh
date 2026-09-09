@@ -34,7 +34,17 @@ shopt -u nullglob
 kernel_release_file="$kernel_dir/include/config/kernel.release"
 [[ -s "$kernel_release_file" ]] || die "kernel release file is missing: $kernel_release_file"
 kernel_release=$(<"$kernel_release_file")
+target_loader="$rootfs_dir/usr/lib/ld-linux-riscv64-lp64d.so.1"
+compat_loader="$rootfs_dir/lib/ld-linux-riscv64-lp64d.so.1"
+[[ -f "$target_loader" ]] || die "riscv64 dynamic loader is missing: $target_loader"
+if [[ ! -e "$compat_loader" ]]; then
+    install -d -m 0755 "$rootfs_dir/lib"
+    ln -s ../usr/lib/ld-linux-riscv64-lp64d.so.1 "$compat_loader"
+fi
+
+printf 'install-kernel: extracting %s\n' "${image_packages[0]}"
 dpkg-deb --extract "${image_packages[0]}" "$rootfs_dir"
+printf 'install-kernel: running depmod for %s\n' "$kernel_release"
 depmod -b "$rootfs_dir" "$kernel_release"
 install -d -m 0755 "$rootfs_dir/boot"
 qemu_path=$(command -v qemu-riscv64-static) || die "missing qemu-riscv64-static"
@@ -47,8 +57,11 @@ install -m 0755 "$qemu_path" "$rootfs_dir/usr/bin/qemu-riscv64-static"
 # Debian Trixie stores the riscv64 loader in /usr/lib on merged-/usr systems,
 # while the ELF interpreter name remains /lib/ld-linux-riscv64-lp64d.so.1.
 # The /usr loader prefix keeps this invocation independent of host binfmt.
+printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
+[[ -s "$rootfs_dir/boot/initrd.img-$kernel_release" ]] \
+    || die "mkinitramfs did not create a usable initrd"
 printf 'kernel installed into rootfs: %s (%s)\n' "$board" "$kernel_release"

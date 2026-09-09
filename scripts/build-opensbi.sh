@@ -23,6 +23,7 @@ jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 command -v "${cross_compile}gcc" >/dev/null 2>&1 || die "missing ${cross_compile}gcc"
 
 mkdir -p "$output_dir"
-make -C "$opensbi_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" \
-    PLATFORM=generic -j"$jobs"
+env -u BOARD -u BUILD_TYPE -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES \
+    make -C "$opensbi_source" O="$output_dir" ARCH=riscv \
+    CROSS_COMPILE="$cross_compile" PLATFORM=generic -j"$jobs"
 printf 'OpenSBI build complete: %s\n' "$board"

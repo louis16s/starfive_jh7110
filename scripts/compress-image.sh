@@ -20,7 +20,13 @@ readonly image_path="$image_dir/$IMAGE_BASENAME.img"
 readonly compressed_path="$image_path.xz"
 [[ -f "$image_path" ]] || die "missing image: $image_path"
 [[ ! -e "$compressed_path" ]] || die "output exists: $compressed_path; remove it explicitly before rebuilding"
+xz_threads=${XZ_THREADS:-2}
+[[ "$xz_threads" =~ ^[1-9][0-9]*$ ]] || die "XZ_THREADS must be a positive integer"
 
-xz -T0 -9e --keep "$image_path"
-sha256sum "$compressed_path" > "$compressed_path.sha256"
+xz -T"$xz_threads" -6 --keep "$image_path"
+(
+    cd "$image_dir"
+    sha256sum "$(basename "$compressed_path")"
+) > "$compressed_path.sha256"
+[[ -s "$compressed_path" ]] || die "xz did not create a usable compressed image"
 printf 'compressed image: %s\n' "$compressed_path"

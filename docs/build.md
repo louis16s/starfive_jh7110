@@ -1,6 +1,6 @@
 # Build Workflow
 
-Phase 2 provides validation only. It does not claim to produce a bootable image yet.
+The current pipeline produces board-specific image build candidates. A successful CI build proves source, package, rootfs and image assembly; boot and hardware status still require the board acceptance tests.
 
 ## Host baseline
 
@@ -60,9 +60,11 @@ The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builde
 
 The image assembler creates a GPT image with a 512 MiB FAT32 `/boot` partition and an ext4 root partition. The image size is a board-profile setting, not a target storage assumption. OpenSBI/U-Boot remain in the board's SPI-NOR boot path; the image carries the kernel, initrd, DTB and `extlinux.conf` only.
 
-Before assembly, install one kernel package into the rootfs so that an initrd exists, or pass an explicitly generated initrd:
+Before assembly, install one kernel package into the rootfs so that an initrd exists. An explicitly generated initrd can also be supplied:
 
 ```sh
+sudo make BOARD=visionfive2 install-kernel
+sudo make BOARD=visionfive2 image
 sudo INITRD_PATH=/absolute/path/to/initrd.img make BOARD=visionfive2 image
 sudo INITRD_PATH=/absolute/path/to/initrd.img make BOARD=mars image
 ```
@@ -73,15 +75,11 @@ The script refuses to assemble an image when the board DTB, kernel Image or init
 
 `.github/workflows/build.yml` uses Ubuntu 24.04 x86_64, caches the locked source checkouts, builds each selected board independently, and uploads the compressed image, kernel `.deb` files and manifest. `.github/workflows/release.yml` invokes the same reusable build on `v*` tags and publishes both board artifacts. The workflow does not download or redistribute the proprietary PVR/VPU payload; those packages remain a separate license-approved integration step.
 
-## Planned build entry points
-
-After Phase 3–5, these commands will become enabled:
+## Build entry points
 
 ```sh
-./build.sh visionfive2
-./build.sh mars
+./build.sh visionfive2 image
+./build.sh mars image
 make BOARD=visionfive2 image
 make BOARD=mars image
 ```
-
-Until then, `image` exits intentionally so a partial scaffold cannot be mistaken for a tested image builder.

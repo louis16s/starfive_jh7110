@@ -15,7 +15,7 @@ board=$1
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
 
-for command_name in truncate sfdisk losetup mkfs.vfat mkfs.ext4 mount umount blkid rsync install sed; do
+for command_name in truncate sfdisk losetup mkfs.vfat mkfs.ext4 mount umount blkid rsync install sed du; do
     command -v "$command_name" >/dev/null 2>&1 || die "missing command: $command_name"
 done
 
@@ -43,7 +43,15 @@ kernel_release_file="$kernel_dir/include/config/kernel.release"
 kernel_release=$(<"$kernel_release_file")
 mkdir -p "$image_dir"
 [[ ! -e "$image_path" ]] || die "output exists: $image_path; remove it explicitly before rebuilding"
-truncate -s "$((IMAGE_SIZE_MIB * 1024 * 1024))" "$image_path"
+rootfs_used_mib=$(du -sm "$rootfs_dir" | awk '{print $1}')
+minimum_image_mib=$((BOOT_SIZE_MIB + rootfs_used_mib + rootfs_used_mib / 10 + 512))
+image_size_mib=$IMAGE_SIZE_MIB
+if (( minimum_image_mib > image_size_mib )); then
+    image_size_mib=$minimum_image_mib
+fi
+printf 'build-image: rootfs uses %s MiB; allocating %s MiB image\n' \
+    "$rootfs_used_mib" "$image_size_mib"
+truncate -s "$((image_size_mib * 1024 * 1024))" "$image_path"
 sfdisk --label gpt "$image_path" <<EOF
 label: gpt
 first-lba: 2048
@@ -66,6 +74,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+for _ in {1..40}; do
+    if [[ -b "$boot_device" && -b "$root_device" ]]; then
+        break
+    fi
+    sleep 0.25
+done
+[[ -b "$boot_device" ]] || die "boot partition device did not appear: $boot_device"
+[[ -b "$root_device" ]] || die "root partition device did not appear: $root_device"
+
 mkfs.vfat -n "$BOOT_PARTITION_LABEL" "$boot_device"
 mkfs.ext4 -L "$ROOT_PARTITION_LABEL" "$root_device"
 mount "$boot_device" "$boot_mount"
@@ -74,9 +91,9 @@ mount "$root_device" "$root_mount"
 rsync -a --exclude=/boot --exclude=/boot/ "$rootfs_dir/" "$root_mount/"
 install -d -m 0755 "$boot_mount/extlinux" "$boot_mount/dtbs/$kernel_release"
 install -m 0644 "$kernel_dir/arch/riscv/boot/Image" "$boot_mount/Image-$kernel_release"
-ln -s "Image-$kernel_release" "$boot_mount/Image"
+install -m 0644 "$kernel_dir/arch/riscv/boot/Image" "$boot_mount/Image"
 install -m 0644 "${initrds[0]}" "$boot_mount/initrd.img-$kernel_release"
-ln -s "initrd.img-$kernel_release" "$boot_mount/initrd.img"
+install -m 0644 "${initrds[0]}" "$boot_mount/initrd.img"
 install -m 0644 "$kernel_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB" "$boot_mount/dtbs/$kernel_release/$KERNEL_DTB"
 
 root_partuuid=$(blkid -s PARTUUID -o value "$root_device")

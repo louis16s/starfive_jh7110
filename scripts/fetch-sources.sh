@@ -37,6 +37,15 @@ for name in names:
         os.makedirs(destination, exist_ok=True)
         subprocess.run(["git", "-C", destination, "init"], check=True)
         subprocess.run(["git", "-C", destination, "remote", "add", "origin", url], check=True)
+    else:
+        current_url = subprocess.check_output(
+            ["git", "-C", destination, "remote", "get-url", "origin"], text=True
+        ).strip()
+        if current_url != url:
+            subprocess.run(
+                ["git", "-C", destination, "remote", "set-url", "origin", url],
+                check=True,
+            )
     subprocess.run(["git", "-C", destination, "fetch", "--no-tags", "origin", commit], check=True)
     subprocess.run(["git", "-C", destination, "checkout", "--detach", commit], check=True)
     actual = subprocess.check_output(
