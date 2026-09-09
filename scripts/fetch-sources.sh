@@ -35,10 +35,10 @@ for name in names:
     destination = os.path.join(source_root, name)
     if not os.path.isdir(os.path.join(destination, ".git")):
         subprocess.run(
-            ["git", "clone", "--no-checkout", "--filter=blob:none", url, destination],
+            ["git", "clone", "--no-checkout", "--no-tags", "--filter=blob:none", url, destination],
             check=True,
         )
-    subprocess.run(["git", "-C", destination, "fetch", "--tags", "origin"], check=True)
+    subprocess.run(["git", "-C", destination, "fetch", "--no-tags", "origin", commit], check=True)
     subprocess.run(["git", "-C", destination, "checkout", "--detach", commit], check=True)
     actual = subprocess.check_output(
         ["git", "-C", destination, "rev-parse", "HEAD"], text=True
