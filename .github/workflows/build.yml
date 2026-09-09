@@ -37,7 +37,6 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.board }}
-    if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -78,33 +77,41 @@ jobs:
           sudo update-binfmts --enable
 
       - name: Validate profile and lock
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} check
 
       - name: Fetch locked BSP sources
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} fetch
 
       - name: Build OpenSBI, U-Boot and kernel packages
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} opensbi
           make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} uboot
           make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} kernel
 
       - name: Build Debian Trixie rootfs
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} rootfs
 
       - name: Install kernel package and generate initrd
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} install-kernel
 
       - name: Assemble and package image
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} image
           make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} compress
           make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} manifest
 
       - name: Run shellcheck
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: shellcheck --severity=error scripts/*.sh build.sh board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot
 
       - name: Upload build artifacts
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         uses: actions/upload-artifact@v4
         with:
           name: jh7110-desktop-${{ matrix.board }}-${{ env.BUILD_TYPE }}
