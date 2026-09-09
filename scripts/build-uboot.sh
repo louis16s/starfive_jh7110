@@ -19,10 +19,12 @@ source "$REPO_ROOT/board/$board/profile.conf"
 
 uboot_source="$REPO_ROOT/$SOURCE_ROOT/$UBOOT_SOURCE"
 output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/u-boot"
+opensbi_image="$REPO_ROOT/$OUTPUT_ROOT/$board/opensbi/platform/generic/firmware/fw_dynamic.bin"
 cross_compile=${CROSS_COMPILE:-riscv64-linux-gnu-}
 jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 
 [[ -d "$uboot_source" ]] || die "missing source; run make BOARD=$board fetch"
+[[ -f "$opensbi_image" ]] || die "missing OpenSBI image: run make BOARD=$board opensbi"
 command -v "${cross_compile}gcc" >/dev/null 2>&1 || die "missing ${cross_compile}gcc"
 
 if [[ "$board" == mars ]]; then
@@ -39,7 +41,7 @@ mkdir -p "$output_dir"
 uboot_make() {
     env -u BOARD -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES \
         make -C "$uboot_source" O="$output_dir" ARCH=riscv \
-        CROSS_COMPILE="$cross_compile" "$@"
+        CROSS_COMPILE="$cross_compile" OPENSBI="$opensbi_image" "$@"
 }
 
 uboot_make "$UBOOT_DEFCONFIG"

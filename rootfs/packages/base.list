@@ -1,5 +1,6 @@
 # Debian Trixie base and first-boot/runtime services.
 ca-certificates
+debian-archive-keyring
 cloud-guest-utils
 dbus
 e2fsprogs

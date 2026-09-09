@@ -17,6 +17,8 @@ source "$REPO_ROOT/board/$board/profile.conf"
 command -v mmdebstrap >/dev/null 2>&1 || die "mmdebstrap is required on the Linux build host"
 command -v qemu-riscv64-static >/dev/null 2>&1 || die "qemu-riscv64-static is required for riscv64 customization"
 command -v rsync >/dev/null 2>&1 || die "rsync is required"
+[[ -f /usr/share/keyrings/debian-archive-keyring.gpg ]] \
+    || die "missing Debian archive keyring: install debian-archive-keyring"
 
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/rootfs"
 readonly rootfs_dir="$output_dir/rootfs"
@@ -24,6 +26,7 @@ readonly package_dir="$REPO_ROOT/rootfs/packages"
 readonly overlay_dir="$REPO_ROOT/rootfs/overlay"
 readonly snapshot="$DEBIAN_SNAPSHOT"
 readonly security_snapshot="$DEBIAN_SECURITY_SNAPSHOT"
+readonly debian_keyring=/usr/share/keyrings/debian-archive-keyring.gpg
 mmdebstrap_mode=unshare
 if [[ "$EUID" -eq 0 ]]; then
     # Rootless unshare cannot reliably create a destination below the GitHub
@@ -51,6 +54,7 @@ mmdebstrap \
     --architectures="$TARGET_ARCH" \
     --variant=apt \
     --components=main,contrib,non-free-firmware \
+    --keyring="$debian_keyring" \
     --aptopt='Acquire::Check-Valid-Until "false"' \
     --include="$include_list" \
     "$DEBIAN_SUITE" "$rootfs_dir" "$snapshot"
