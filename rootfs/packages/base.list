@@ -8,7 +8,8 @@ locales
 network-manager
 openssh-server
 parted
-policykit-1
+polkitd
+pkexec
 sudo
 systemd
 systemd-sysv
@@ -25,7 +26,7 @@ iproute2
 nftables
 cifs-utils
 ntfs-3g
-samba-client
+smbclient
 podman
 slirp4netns
 uidmap

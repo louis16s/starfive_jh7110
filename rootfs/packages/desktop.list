@@ -1,6 +1,6 @@
 # Default desktop and a lightweight Wayland validation session.
 blueman
-chromium
+# Chromium has no Debian Trixie riscv64 binary; report it as an optional WARN.
 dbus-x11
 file-roller
 firefox-esr
