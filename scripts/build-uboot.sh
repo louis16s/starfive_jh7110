@@ -10,6 +10,9 @@ die() {
 
 [[ $# -eq 1 ]] || die "usage: $0 BOARD"
 board=$1
+# GNU make exports command-line variables. Do not let the project-level
+# BOARD=mars override U-Boot's Kconfig-generated BOARD=visionfive2 value.
+unset BOARD
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"

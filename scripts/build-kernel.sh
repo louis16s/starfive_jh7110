@@ -31,6 +31,7 @@ make -C "$kernel_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compil
     INSTALL_MOD_PATH="$output_dir/modules" modules_install
 
 package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
+package_output_root="$REPO_ROOT/$OUTPUT_ROOT/$board"
 mkdir -p "$package_dir"
 make -C "$kernel_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" \
     KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
@@ -38,11 +39,15 @@ make -C "$kernel_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compil
     -j"$jobs" bindeb-pkg
 
 shopt -s nullglob
-deb_files=("$kernel_source"/*.deb "$output_dir"/*.deb "$REPO_ROOT"/*.deb)
+deb_files=("$package_output_root"/*.deb)
+package_metadata=("$package_output_root"/*.buildinfo "$package_output_root"/*.changes)
 shopt -u nullglob
 [[ ${#deb_files[@]} -gt 0 ]] || die "kernel build produced no Debian packages"
 for deb_file in "${deb_files[@]}"; do
     install -m 0644 "$deb_file" "$package_dir/"
+done
+for metadata_file in "${package_metadata[@]}"; do
+    install -m 0644 "$metadata_file" "$package_dir/"
 done
 
 dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
