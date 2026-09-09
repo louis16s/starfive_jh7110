@@ -24,6 +24,13 @@ readonly package_dir="$REPO_ROOT/rootfs/packages"
 readonly overlay_dir="$REPO_ROOT/rootfs/overlay"
 readonly snapshot="$DEBIAN_SNAPSHOT"
 readonly security_snapshot="$DEBIAN_SECURITY_SNAPSHOT"
+mmdebstrap_mode=unshare
+if [[ "$EUID" -eq 0 ]]; then
+    # Rootless unshare cannot reliably create a destination below the GitHub
+    # runner workspace after the kernel package build. In a privileged build,
+    # use mmdebstrap's root mode instead of nesting another user namespace.
+    mmdebstrap_mode=root
+fi
 
 [[ ! -e "$rootfs_dir" ]] || die "output exists: $rootfs_dir; remove it explicitly before rebuilding"
 mkdir -p "$output_dir"
@@ -39,7 +46,7 @@ mapfile -t packages < <(
 include_list=$(IFS=,; echo "${packages[*]}")
 
 mmdebstrap \
-    --mode=unshare \
+    --mode="$mmdebstrap_mode" \
     --format=directory \
     --architectures="$TARGET_ARCH" \
     --variant=apt \

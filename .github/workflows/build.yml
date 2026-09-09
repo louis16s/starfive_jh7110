@@ -93,7 +93,7 @@ jobs:
 
       - name: Build Debian Trixie rootfs
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} rootfs
+        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} rootfs
 
       - name: Install kernel package and generate initrd
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
@@ -103,8 +103,8 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} image
-          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} compress
-          make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} manifest
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} compress
+          sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${BUILD_TYPE} manifest
 
       - name: Run shellcheck
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board

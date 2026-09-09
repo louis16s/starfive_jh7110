@@ -31,7 +31,18 @@ if [[ "$board" == mars ]]; then
 fi
 
 mkdir -p "$output_dir"
-make -C "$uboot_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" "$UBOOT_DEFCONFIG"
-make -C "$uboot_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" olddefconfig
-make -C "$uboot_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" -j"$jobs" all
+# The outer project invokes this script through `make BOARD=...`. GNU make
+# propagates command-line variables through MAKEFLAGS/MAKEOVERRIDES even after
+# the shell variable has been unset, which makes U-Boot see BOARD=mars and
+# skips the Kconfig-selected board objects. Keep the U-Boot make environment
+# isolated from project-level make variables.
+uboot_make() {
+    env -u BOARD -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES \
+        make -C "$uboot_source" O="$output_dir" ARCH=riscv \
+        CROSS_COMPILE="$cross_compile" "$@"
+}
+
+uboot_make "$UBOOT_DEFCONFIG"
+uboot_make olddefconfig
+uboot_make -j"$jobs" all
 printf 'U-Boot build complete: %s\n' "$board"
