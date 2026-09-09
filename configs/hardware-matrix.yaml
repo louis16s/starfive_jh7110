@@ -1,0 +1,51 @@
+schema: 1
+evidence_policy: >-
+  A true capability means the board exposes the hardware and the locked BSP
+  contains a candidate path. It becomes PASS only after physical validation.
+
+visionfive2:
+  model: StarFive VisionFive 2 8GB
+  dtb: jh7110-starfive-visionfive-2-v1.3b.dtb
+  capabilities:
+    hdmi: {status: target, evidence: visionfive2_datasheet}
+    gpu: {status: bsp-required, evidence: starfive_soft_3rdpart}
+    vpu: {status: bsp-required, evidence: starfive_soft_3rdpart}
+    ethernet: {status: target, evidence: visionfive2_dts}
+    usb3: {status: target, evidence: visionfive2_datasheet}
+    nvme: {status: target, evidence: visionfive2_datasheet}
+    emmc: {status: target, evidence: visionfive2_datasheet}
+    sd: {status: target, evidence: visionfive2_dts}
+    gpio: {status: target, evidence: visionfive2_datasheet}
+    i2c: {status: target, evidence: visionfive2_dts}
+    spi: {status: target, evidence: visionfive2_dts}
+    uart: {status: target, evidence: visionfive2_dts}
+    csi: {status: target, evidence: jh7110_soc}
+    dsi: {status: target, evidence: jh7110_soc}
+
+mars:
+  model: Milk-V Mars 8GB
+  dtb: jh7110-milkv-mars.dtb
+  capabilities:
+    hdmi: {status: target, evidence: mars_overview}
+    gpu: {status: bsp-required, evidence: starfive_soft_3rdpart}
+    vpu: {status: bsp-required, evidence: mars_overview}
+    ethernet: {status: target, evidence: mars_overview}
+    usb3: {status: target, evidence: mars_overview}
+    nvme: {status: skip, evidence: mars_overview}
+    emmc: {status: target, evidence: mars_overview}
+    sd: {status: target, evidence: mars_overview}
+    gpio: {status: target, evidence: mars_overview}
+    i2c: {status: target, evidence: mars_dts}
+    spi: {status: target, evidence: mars_dts}
+    uart: {status: target, evidence: mars_boot}
+    csi: {status: target, evidence: mars_overview}
+    dsi: {status: target, evidence: mars_overview}
+
+evidence:
+  visionfive2_datasheet: https://doc-en.rvspace.org/VisionFive2/PDF/VisionFive2_Datasheet.pdf
+  visionfive2_dts: https://github.com/torvalds/linux/blob/master/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dts
+  mars_overview: https://milkv.io/docs/mars/overview
+  mars_boot: https://milkv.io/docs/mars/getting-started/boot
+  mars_dts: https://github.com/torvalds/linux/blob/master/arch/riscv/boot/dts/starfive/jh7110-milkv-mars.dts
+  jh7110_soc: https://milkv.io/docs/mars/overview
+  starfive_soft_3rdpart: https://github.com/starfive-tech/soft_3rdpart

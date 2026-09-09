@@ -125,7 +125,7 @@ sources:
     name: Mesa stable tag for comparison
     url: https://gitlab.freedesktop.org/mesa/mesa.git
     ref: mesa-26.2.2
-    commit: 997191be71afdb2234fa6a7275bfb8475c22250f
+    commit: 3281a69a8bfd9f997e91c15ed0e6290cae12dd32
     role: mainline-experimental-reference
     license: MIT-and-component-specific
     notes: >-
@@ -136,7 +136,7 @@ sources:
     name: FFmpeg stable tag for future VPU integration
     url: https://git.ffmpeg.org/ffmpeg.git
     ref: n9.0.1
-    commit: 501bb49457b9dfb25d6a208832e0a6e6cd53108d
+    commit: bf1b838f2ab88b4f8fd83443325c782ea0e0f7fa
     role: planned-phase-8
     license: LGPL-2.1-or-later-or-GPL-2.0-or-later
 
@@ -144,7 +144,7 @@ sources:
     name: GStreamer stable tag for future VPU integration
     url: https://gitlab.freedesktop.org/gstreamer/gstreamer.git
     ref: 1.29.2
-    commit: dc05e38bade289e45830cf3c58498a50ad958554
+    commit: badd9563b2ac3117ea2a99348bbe46298d6992ec
     role: planned-phase-8
     license: LGPL-2.1-or-later
 
