@@ -1,0 +1,12 @@
+/build/
+/cache/
+/output/
+/work/
+/logs/
+/sources/
+*.img
+*.img.xz
+*.deb
+*.log
+*.swp
+.DS_Store
