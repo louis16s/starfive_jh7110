@@ -65,9 +65,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ubuntu-24.04-${{ runner.arch }}-${{ matrix.board }}-ccache-v1-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ubuntu-24.04-${{ runner.arch }}-${{ matrix.board }}-ccache-v1-${{ inputs.build_type }}-
+            ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ inputs.build_type }}-
 
       - name: Install host dependencies
         run: |
