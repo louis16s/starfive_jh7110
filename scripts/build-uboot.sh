@@ -23,7 +23,7 @@ jobs=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 command -v "${cross_compile}gcc" >/dev/null 2>&1 || die "missing ${cross_compile}gcc"
 
 if [[ "$board" == mars ]]; then
-    rg -q 'jh7110-milkv-mars' "$uboot_source/configs/starfive_visionfive2_defconfig" \
+    grep -q 'jh7110-milkv-mars' "$uboot_source/configs/starfive_visionfive2_defconfig" \
         || die "Mars U-Boot source has no Mars DTB in CONFIG_OF_LIST"
 fi
 

@@ -34,6 +34,7 @@ package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 mkdir -p "$package_dir"
 make -C "$kernel_source" O="$output_dir" ARCH=riscv CROSS_COMPILE="$cross_compile" \
     KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
+    DPKG_FLAGS=-d \
     -j"$jobs" bindeb-pkg
 
 shopt -s nullglob

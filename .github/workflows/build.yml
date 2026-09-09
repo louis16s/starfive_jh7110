@@ -69,7 +69,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             bc bison binfmt-support build-essential ccache cifs-utils \
-            device-tree-compiler dosfstools dwarves flex gdisk \
+            debhelper debhelper-compat device-tree-compiler dosfstools dwarves flex gdisk \
             initramfs-tools libelf-dev libncurses-dev libssl-dev \
             mmdebstrap mount qemu-user-static rsync shellcheck \
             gcc-riscv64-linux-gnu python3-yaml swig u-boot-tools \

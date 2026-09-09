@@ -39,7 +39,7 @@ make BOARD=visionfive2 opensbi
 make BOARD=visionfive2 kernel
 ```
 
-The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debian package version and copies the resulting `.deb` files to `build/<board>/packages/`. It refuses to report success if the selected board DTB is absent. The package names remain kernel-release-derived (for example `linux-image-<release>.deb` and `linux-headers-<release>.deb`) so Debian package metadata stays truthful.
+The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debian package version and copies the resulting `.deb` files to `build/<board>/packages/`. The locked vendor kernel generates a Debian build dependency on the historical `debhelper-compat (= 12)` and an unqualified target-architecture `libssl-dev`; Ubuntu 24.04 does not satisfy that exact cross-architecture metadata even when the native build tools are installed, so the CI installs the current debhelper implementation and passes `DPKG_FLAGS=-d` only to skip the metadata pre-check. The actual Debian packaging rules still run and failures remain fatal. It refuses to report success if the selected board DTB is absent. The package names remain kernel-release-derived (for example `linux-image-<release>.deb` and `linux-headers-<release>.deb`) so Debian package metadata stays truthful.
 
 Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
 
