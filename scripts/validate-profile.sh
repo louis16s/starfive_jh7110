@@ -25,6 +25,10 @@ source "$profile"
 [[ -n "${KERNEL_DTB_COMPATIBLE:-}" ]] || die "KERNEL_DTB_COMPATIBLE is empty"
 [[ -n "${UBOOT_DEFCONFIG:-}" ]] || die "UBOOT_DEFCONFIG is empty"
 [[ -n "${UBOOT_VARIANT:-}" ]] || die "UBOOT_VARIANT is empty"
+[[ -n "${KERNEL_SOURCE:-}" ]] || die "KERNEL_SOURCE is empty"
+[[ -n "${KERNEL_DEFCONFIG:-}" ]] || die "KERNEL_DEFCONFIG is empty"
+[[ -n "${UBOOT_SOURCE:-}" ]] || die "UBOOT_SOURCE is empty"
+[[ -n "${OPENSBI_SOURCE:-}" ]] || die "OPENSBI_SOURCE is empty"
 if [[ "$board" == mars && "${MARS_DTB_ALLOWED:-0}" != 1 ]]; then
     die "Mars board separation flag is invalid"
 fi

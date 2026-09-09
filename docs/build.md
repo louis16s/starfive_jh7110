@@ -22,6 +22,25 @@ The supported build host is Ubuntu 24.04 x86_64. The final build will install th
 
 `verify-source-lock.sh` resolves the recorded branch/tag and rejects a moving or changed revision. Vendor binary artifacts are identified but are not downloaded by this phase.
 
+## Phase 3 source and build entry points
+
+The source fetcher checks out the exact SHA from `sources.lock` in `sources/`:
+
+```sh
+make BOARD=visionfive2 fetch
+make BOARD=mars fetch
+```
+
+Then the individual BSP components can be built when an Ubuntu x86_64 host with a RISC-V cross toolchain is available:
+
+```sh
+make BOARD=visionfive2 uboot
+make BOARD=visionfive2 opensbi
+make BOARD=visionfive2 kernel
+```
+
+Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
+
 ## Planned build entry points
 
 After Phase 3–5, these commands will become enabled:
