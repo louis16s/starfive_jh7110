@@ -39,6 +39,8 @@ make BOARD=visionfive2 opensbi
 make BOARD=visionfive2 kernel
 ```
 
+The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debian package version and copies the resulting `.deb` files to `build/<board>/packages/`. It refuses to report success if the selected board DTB is absent. The package names remain kernel-release-derived (for example `linux-image-<release>.deb` and `linux-headers-<release>.deb`) so Debian package metadata stays truthful.
+
 Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
 
 ## Phase 4 Debian rootfs
@@ -54,7 +56,18 @@ make BOARD=mars rootfs
 
 The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `jh7110` sudo-capable account, and installs `jh7110-firstboot.service`. The first-boot service sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
 
-The image assembler is not enabled yet: it will consume this directory rootfs only after kernel, DTB, OpenSBI and board-labelled U-Boot artifacts have been validated.
+## Phase 5 removable-media image
+
+The image assembler creates a GPT image with a 512 MiB FAT32 `/boot` partition and an ext4 root partition. The image size is a board-profile setting, not a target storage assumption. OpenSBI/U-Boot remain in the board's SPI-NOR boot path; the image carries the kernel, initrd, DTB and `extlinux.conf` only.
+
+Before assembly, install one kernel package into the rootfs so that an initrd exists, or pass an explicitly generated initrd:
+
+```sh
+sudo INITRD_PATH=/absolute/path/to/initrd.img make BOARD=visionfive2 image
+sudo INITRD_PATH=/absolute/path/to/initrd.img make BOARD=mars image
+```
+
+The script refuses to assemble an image when the board DTB, kernel Image or initrd is missing. It writes the root partition PARTUUID into both `fstab` and `extlinux.conf`, so the image is not tied to `/dev/mmcblk*` naming.
 
 ## Planned build entry points
 

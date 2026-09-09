@@ -35,5 +35,4 @@ rootfs:
 	./scripts/build-rootfs.sh "$(BOARD)"
 
 image:
-	@echo "image build is scheduled for Phase 5; run 'make BOARD=$(BOARD) check' for Phase 2 validation" >&2
-	@exit 2
+	./scripts/build-image.sh "$(BOARD)"

@@ -1,0 +1,9 @@
+TIMEOUT 5
+DEFAULT jh7110
+
+LABEL jh7110
+    MENU LABEL Debian GNU/Linux (VisionFive 2)
+    LINUX /Image
+    INITRD /initrd.img
+    FDT /dtbs/@KERNEL_RELEASE@/@KERNEL_DTB@
+    APPEND root=PARTUUID=@ROOT_PARTUUID@ rw rootwait console=ttyS0,115200 earlycon=sbi

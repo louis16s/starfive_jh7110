@@ -21,7 +21,7 @@ Phase 4 commands:
   uboot           Build the board-selected U-Boot (requires the cross toolchain)
   opensbi         Build the board-selected OpenSBI (requires the cross toolchain)
   rootfs          Build the Debian Trixie riscv64 directory rootfs
-  image           Reserved for the Phase 5 image builder
+  image           Assemble the GPT boot/root image (run as root)
 EOF
 }
 

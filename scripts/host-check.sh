@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 readonly REQUIRED_COMMANDS=(
     bash git python3 curl make awk sed rsync mmdebstrap qemu-riscv64-static
-    riscv64-linux-gnu-gcc dtc
+    riscv64-linux-gnu-gcc dtc sfdisk losetup truncate mkfs.vfat mkfs.ext4 mount umount blkid
 )
 missing=0
 

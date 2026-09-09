@@ -30,6 +30,9 @@ source "$profile"
 [[ -n "${UBOOT_SOURCE:-}" ]] || die "UBOOT_SOURCE is empty"
 [[ -n "${OPENSBI_SOURCE:-}" ]] || die "OPENSBI_SOURCE is empty"
 [[ -n "${TIMEZONE:-}" ]] || die "TIMEZONE is empty"
+[[ -n "${IMAGE_SIZE_MIB:-}" ]] || die "IMAGE_SIZE_MIB is empty"
+[[ "${ROOT_PARTITION_NUMBER:-}" == 2 ]] || die "root partition must be partition 2"
+[[ "${BOOTLOADER_MEDIA:-}" == spi-nor ]] || die "unsupported bootloader media"
 if [[ "$board" == mars && "${MARS_DTB_ALLOWED:-0}" != 1 ]]; then
     die "Mars board separation flag is invalid"
 fi
