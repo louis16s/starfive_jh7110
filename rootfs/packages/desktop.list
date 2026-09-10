@@ -2,6 +2,14 @@
 blueman
 # Chromium has no Debian Trixie riscv64 binary; report it as an optional WARN.
 dbus-x11
+fonts-noto-cjk
+fonts-noto-color-emoji
+mesa-utils
+vulkan-tools
+drm-info
+xserver-xorg-core
+xserver-xorg-input-libinput
+x11-xserver-utils
 file-roller
 firefox-esr
 galculator

@@ -37,7 +37,25 @@ kernel_make() {
 
 kernel_make "$KERNEL_DEFCONFIG"
 kernel_make olddefconfig
+# Fail before the expensive build if the locked BSP loses graphics support.
+for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE; do
+    grep -qx "CONFIG_${symbol}=y" "$output_dir/.config" \
+        || die "required BSP option missing: CONFIG_$symbol"
+done
 kernel_make -j"$jobs" Image modules dtbs
+
+build_desktop_dtb() {
+if [[ "$board" == mars ]]; then
+    command -v dtc >/dev/null 2>&1 || die "missing dtc"
+    "${cross_compile}gcc" -E -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+        -I "$kernel_source/arch/riscv/boot/dts/starfive" \
+        -I "$kernel_source/include" \
+        "$REPO_ROOT/dts/mars/desktop.dts" -o "$output_dir/mars-desktop.dts"
+    dtc -I dts -O dtb -o "$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB" \
+        "$output_dir/mars-desktop.dts"
+fi
+}
+build_desktop_dtb
 
 package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 package_output_root="$REPO_ROOT/$OUTPUT_ROOT/$board"
@@ -45,6 +63,17 @@ mkdir -p "$package_dir"
 kernel_make KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
     DPKG_FLAGS=-d \
     -j"$jobs" bindeb-pkg
+# Packaging may invoke dtbs again; restore the board-specific desktop DTB
+# consumed by the image assembler and validate the final output.
+build_desktop_dtb
+dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
+for node in /display-subsystem /soc/dc8200@29400000 /soc/hdmi@29590000 /soc/gpu@18000000; do
+    [[ "$(fdtget "$dtb_path" "$node" status)" == okay ]] \
+        || die "graphics node disabled: $node"
+done
+compatible=$(fdtget "$dtb_path" / compatible)
+[[ " $compatible " == *" $KERNEL_DTB_COMPATIBLE "* ]] \
+    || die "DTB compatible does not match board: $compatible"
 
 shopt -s nullglob
 deb_files=("$package_output_root"/*.deb)

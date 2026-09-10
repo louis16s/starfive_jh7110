@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Run from a terminal in the logged-in desktop, preserving DISPLAY/XAUTHORITY.
+failures=0
+probe() {
+    local label=$1
+    shift
+    if ! command -v "$1" >/dev/null 2>&1; then
+        printf 'WARN %s: 未安装 %s\n' "$label" "$1"
+        return
+    fi
+    local result
+    if result=$(timeout 30 "$@" 2>&1); then
+        printf '%s\n' "$result"
+        if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
+            printf 'FAIL %s: 检测到软件渲染，不能作为硬件加速通过\n' "$label"
+            failures=$((failures + 1))
+        else
+            printf 'INFO %s: 命令成功；请核对设备和 renderer 是否为 PowerVR\n' "$label"
+        fi
+    else
+        printf 'WARN %s: 命令失败或超时\n%s\n' "$label" "$result"
+        failures=$((failures + 1))
+    fi
+}
+
+printf 'JH7110 图形诊断\nKernel: %s\nSession: %s\n' "$(uname -r)" "${XDG_SESSION_TYPE:-unknown}"
+shopt -s nullglob
+nodes=(/dev/dri/card* /dev/dri/renderD*)
+if ((${#nodes[@]})); then
+    ls -l "${nodes[@]}"
+else
+    printf 'FAIL: 无 DRM 设备\n'
+    failures=$((failures + 1))
+fi
+for connector in /sys/class/drm/card*-HDMI-A-*; do
+    printf '\nHDMI: %s\n' "${connector##*/}"
+    for field in status enabled modes; do
+        if [[ -r "$connector/$field" ]]; then
+            printf '%s:\n' "$field"
+            cat "$connector/$field"
+        fi
+    done
+done
+probe DRM drm_info
+probe Vulkan vulkaninfo --summary
+if [[ -n "${DISPLAY:-}" ]]; then
+    probe OpenGL glxinfo -B
+    probe Display xrandr --current
+else
+    printf 'SKIP: X11 检测需要在桌面终端执行\n'
+fi
+if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    probe EGL eglinfo -B
+fi
+printf '\n诊断失败计数: %s（命令成功不等于实板验收通过）\n' "$failures"
+((failures == 0))

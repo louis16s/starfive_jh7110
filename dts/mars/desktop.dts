@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+// Retain the locked Mars board, PHY, storage and power configuration.
+#include "jh7110-milkv-mars.dts"
+
+&sysgpio {
+    mars_hdmi_pins: mars-hdmi-0 {
+        scl-pins {
+            pinmux = <GPIOMUX(0, GPOUT_SYS_HDMI_DDC_SCL, GPOEN_SYS_HDMI_DDC_SCL, GPI_SYS_HDMI_DDC_SCL)>;
+            bias-pull-up;
+            input-enable;
+        };
+        sda-pins {
+            pinmux = <GPIOMUX(1, GPOUT_SYS_HDMI_DDC_SDA, GPOEN_SYS_HDMI_DDC_SDA, GPI_SYS_HDMI_DDC_SDA)>;
+            bias-pull-up;
+            input-enable;
+        };
+        hpd-pins {
+            pinmux = <GPIOMUX(15, GPOUT_LOW, GPOEN_DISABLE, GPI_NONE)>;
+            input-enable;
+        };
+    };
+};
+
+&display {
+    ports = <&mars_dc_hdmi>;
+    status = "okay";
+};
+
+&dc8200 {
+    status = "okay";
+    port {
+        #address-cells = <1>;
+        #size-cells = <0>;
+        mars_dc_hdmi: endpoint@1 {
+            reg = <1>;
+            remote-endpoint = <&mars_hdmi_in>;
+        };
+    };
+};
+
+&hdmi {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = <&mars_hdmi_pins>;
+    hpd-gpio = <&sysgpio 15 GPIO_ACTIVE_HIGH>;
+    hdmi_0p9-supply = <&hdmi_0p9>;
+    hdmi_1p8-supply = <&hdmi_1p8>;
+    port {
+        mars_hdmi_in: endpoint {
+            remote-endpoint = <&mars_dc_hdmi>;
+        };
+    };
+};
+
+&gpu {
+    status = "okay";
+};

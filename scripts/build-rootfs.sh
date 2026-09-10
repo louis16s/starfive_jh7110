@@ -133,6 +133,7 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         passwd --lock jh7110
         systemctl preset-all
         systemctl enable NetworkManager systemd-timesyncd ssh lightdm
+        systemctl set-default graphical.target
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
         apt-get clean

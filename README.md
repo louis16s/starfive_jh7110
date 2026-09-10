@@ -1,5 +1,7 @@
 # jh7110-desktop
 
+HDMI/GPU 的最新改动、依据、实板检查方法与剩余问题见 [图形支持说明](docs/graphics.md)。
+
 Reproducible Debian Trixie desktop image engineering for:
 
 * StarFive VisionFive 2 8GB (`visionfive2`)
