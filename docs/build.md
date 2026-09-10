@@ -101,6 +101,9 @@ pristine rootfs and identical kernel outputs is a further optimization, but
 requires separate artifact handoff and cache invalidation for package manifests,
 snapshot, overlays, configuration and build scripts. Full rootfs caching has
 not been enabled, so stale board identity and packages cannot bypass construction.
+The fixed Debian Snapshot is retried up to three times with APT transport
+retries; a transient 5xx response therefore does not immediately discard the
+whole build.
 The `debug` input currently labels the build; it does not yet select a distinct
 kernel debug configuration.
 

@@ -48,16 +48,30 @@ mapfile -t packages < <(
 [[ ${#packages[@]} -gt 0 ]] || die "package manifest is empty"
 include_list=$(IFS=,; echo "${packages[*]}")
 
-mmdebstrap \
-    --mode="$mmdebstrap_mode" \
-    --format=directory \
-    --architectures="$TARGET_ARCH" \
-    --variant=apt \
-    --components=main,contrib,non-free-firmware \
-    --keyring="$debian_keyring" \
-    --aptopt='Acquire::Check-Valid-Until "false"' \
-    --include="$include_list" \
-    "$DEBIAN_SUITE" "$rootfs_dir" "$snapshot"
+mmdebstrap_attempt=1
+while :; do
+    if mmdebstrap \
+        --mode="$mmdebstrap_mode" \
+        --format=directory \
+        --architectures="$TARGET_ARCH" \
+        --variant=apt \
+        --components=main,contrib,non-free-firmware \
+        --keyring="$debian_keyring" \
+        --aptopt='Acquire::Check-Valid-Until "false"' \
+        --aptopt='Acquire::Retries "5"' \
+        --include="$include_list" \
+        "$DEBIAN_SUITE" "$rootfs_dir" "$snapshot"; then
+        break
+    fi
+    if (( mmdebstrap_attempt >= 3 )); then
+        die "mmdebstrap failed after $mmdebstrap_attempt attempts"
+    fi
+    printf 'build-rootfs: mmdebstrap attempt %s failed; retrying snapshot download\n' \
+        "$mmdebstrap_attempt" >&2
+    rm -rf "$rootfs_dir"
+    ((mmdebstrap_attempt += 1))
+    sleep 10
+done
 
 rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
 chmod 0755 "$rootfs_dir/usr/libexec/jh7110-firstboot"
