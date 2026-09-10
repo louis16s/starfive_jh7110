@@ -163,8 +163,14 @@ jobs:
             build/${{ matrix.board }}/image/*.img.xz
             build/${{ matrix.board }}/image/*.img.xz.sha256
             build/${{ matrix.board }}/packages/*.deb
-            build/${{ matrix.board }}/u-boot/u-boot*
-            build/${{ matrix.board }}/u-boot/spl/u-boot*
+            build/${{ matrix.board }}/u-boot/u-boot.bin
+            build/${{ matrix.board }}/u-boot/u-boot.img
+            build/${{ matrix.board }}/u-boot/u-boot-*.bin
+            build/${{ matrix.board }}/u-boot/u-boot-*.img
+            build/${{ matrix.board }}/u-boot/spl/u-boot-spl.bin
+            build/${{ matrix.board }}/u-boot/spl/u-boot-spl.bin.normal.out
+            build/${{ matrix.board }}/u-boot/spl/u-boot-spl.dtb
             build/${{ matrix.board }}/opensbi/platform/generic/firmware/fw_dynamic.bin
-            build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/*.dtb
+            build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dtb
+            build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/jh7110-milkv-mars.dtb
             build/${{ matrix.board }}/build-manifest.txt
