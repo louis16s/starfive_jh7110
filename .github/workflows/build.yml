@@ -145,6 +145,21 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" install-kernel
 
+      - name: Stage selected board DTB
+        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
+        run: |
+          set -Eeuo pipefail
+          case "${{ matrix.board }}" in
+            visionfive2) kernel_dtb=jh7110-starfive-visionfive-2-v1.3b.dtb ;;
+            mars) kernel_dtb=jh7110-milkv-mars.dtb ;;
+            *) echo "unsupported board: ${{ matrix.board }}" >&2; exit 1 ;;
+          esac
+          release_dir="build/${{ matrix.board }}/release"
+          mkdir -p "$release_dir"
+          install -m 0644 \
+            "build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/$kernel_dtb" \
+            "$release_dir/$kernel_dtb"
+
       - name: Assemble and package image
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
@@ -171,6 +186,5 @@ jobs:
             build/${{ matrix.board }}/u-boot/spl/u-boot-spl.bin.normal.out
             build/${{ matrix.board }}/u-boot/spl/u-boot-spl.dtb
             build/${{ matrix.board }}/opensbi/platform/generic/firmware/fw_dynamic.bin
-            build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/jh7110-starfive-visionfive-2-v1.3b.dtb
-            build/${{ matrix.board }}/kernel/arch/riscv/boot/dts/starfive/jh7110-milkv-mars.dtb
+            build/${{ matrix.board }}/release/*.dtb
             build/${{ matrix.board }}/build-manifest.txt

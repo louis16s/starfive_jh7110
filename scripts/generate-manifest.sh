@@ -70,7 +70,7 @@ mkdir -p "$output_dir/packages"
         done
     for artifact in \
         "$output_dir/opensbi/platform/generic/firmware/fw_dynamic.bin" \
-        "$output_dir/kernel/arch/riscv/boot/dts/starfive/$KERNEL_DTB"; do
+        "$output_dir/release/$KERNEL_DTB"; do
         if [[ -f "$artifact" ]]; then
             printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
         fi
