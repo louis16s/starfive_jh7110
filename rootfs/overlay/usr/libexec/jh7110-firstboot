@@ -22,6 +22,12 @@ else
     die "invalid board configuration"
 fi
 
+timezone_name=${TIMEZONE:-}
+[[ -n "$timezone_name" && -f "/usr/share/zoneinfo/$timezone_name" ]] \
+    || die "invalid timezone: ${timezone_name:-unset}"
+ln -sfn "/usr/share/zoneinfo/$timezone_name" /etc/localtime
+printf '%s\n' "$timezone_name" > /etc/timezone
+
 if [[ ! -s /etc/machine-id ]]; then
     systemd-machine-id-setup
 fi
@@ -30,6 +36,11 @@ ssh-keygen -A
 
 if command -v locale-gen >/dev/null 2>&1; then
     locale-gen en_US.UTF-8 zh_CN.UTF-8
+fi
+if command -v update-locale >/dev/null 2>&1; then
+    update-locale LANG="${DEFAULT_LOCALE:-zh_CN.UTF-8}" \
+        LANGUAGE="${DEFAULT_LANGUAGE:-zh_CN:zh:en_US:en}" \
+        LC_MESSAGES="${DEFAULT_LOCALE:-zh_CN.UTF-8}"
 fi
 
 root_source=$(findmnt --noheadings --output SOURCE /)

@@ -80,6 +80,10 @@ install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
 BOARD_ID=$BOARD_ID
 BOARD_NAME='$BOARD_NAME'
+TIMEZONE=$TIMEZONE
+DEFAULT_LOCALE=$DEFAULT_LOCALE
+DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
+SUPPORTED_LOCALES='$SUPPORTED_LOCALES'
 EOF
 printf '%s\n' "$TIMEZONE" > "$rootfs_dir/etc/timezone"
 ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$rootfs_dir/etc/localtime"
@@ -115,11 +119,16 @@ install -m 0755 "$(command -v qemu-riscv64-static)" "$qemu_target"
 chroot "$rootfs_dir" /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
+    DEFAULT_LOCALE="$DEFAULT_LOCALE" DEFAULT_LANGUAGE="$DEFAULT_LANGUAGE" \
+    SUPPORTED_LOCALES="$SUPPORTED_LOCALES" \
     /bin/bash -Eeuc '
-        echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
-        echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen
+        : > /etc/locale.gen
+        for locale_name in $SUPPORTED_LOCALES; do
+            printf "%s UTF-8\\n" "$locale_name" >> /etc/locale.gen
+        done
         locale-gen
-        update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8
+        update-locale LANG="$DEFAULT_LOCALE" LANGUAGE="$DEFAULT_LANGUAGE" \
+            LC_MESSAGES="$DEFAULT_LOCALE"
         useradd --create-home --shell /bin/bash --groups sudo,audio,video,input,plugdev,netdev jh7110
         passwd --lock jh7110
         systemctl preset-all

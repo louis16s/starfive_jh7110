@@ -56,6 +56,11 @@ make BOARD=mars rootfs
 
 The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `jh7110` sudo-capable account, and installs `jh7110-firstboot.service`. The first-boot service sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
 
+The default timezone is `Asia/Shanghai` (UTC+8). Both `zh_CN.UTF-8` and
+`en_US.UTF-8` are generated; the default locale is `zh_CN.UTF-8` with the
+English fallback chain `zh_CN:zh:en_US:en`. These values are written to the
+rootfs and recorded in `build-manifest.txt`.
+
 ## Phase 5 removable-media image
 
 The image assembler creates a GPT image with a 512 MiB FAT32 `/boot` partition and an ext4 root partition. The image size is a board-profile setting, not a target storage assumption. OpenSBI/U-Boot remain in the board's SPI-NOR boot path; the image carries the kernel, initrd, DTB and `extlinux.conf` only.
@@ -74,6 +79,12 @@ The script refuses to assemble an image when the board DTB, kernel Image or init
 ## CI and releases
 
 `.github/workflows/build.yml` uses Ubuntu 24.04 x86_64, caches the locked source checkouts, builds each selected board independently, and uploads the compressed image, kernel `.deb` files and manifest. `.github/workflows/release.yml` invokes the same reusable build on `v*` tags and publishes both board artifacts. The workflow does not download or redistribute the proprietary PVR/VPU payload; those packages remain a separate license-approved integration step.
+
+CI build success is not a hardware acceptance result. GPU acceleration,
+Vulkan/OpenGL, HDMI 1080p60, Wayland and audio must be tested on physical VF2
+and Mars boards. Until the licensed PVR package is integrated and those tests
+are recorded, the image must be treated as a desktop build candidate with
+possible software rendering.
 
 ## Build entry points
 

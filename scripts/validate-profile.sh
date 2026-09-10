@@ -30,6 +30,16 @@ source "$profile"
 [[ -n "${UBOOT_SOURCE:-}" ]] || die "UBOOT_SOURCE is empty"
 [[ -n "${OPENSBI_SOURCE:-}" ]] || die "OPENSBI_SOURCE is empty"
 [[ -n "${TIMEZONE:-}" ]] || die "TIMEZONE is empty"
+[[ -n "${DEFAULT_LOCALE:-}" ]] || die "DEFAULT_LOCALE is empty"
+[[ -n "${DEFAULT_LANGUAGE:-}" ]] || die "DEFAULT_LANGUAGE is empty"
+[[ -n "${SUPPORTED_LOCALES:-}" ]] || die "SUPPORTED_LOCALES is empty"
+[[ " $SUPPORTED_LOCALES " == *' en_US.UTF-8 '* ]] \
+    || die "SUPPORTED_LOCALES must include en_US.UTF-8"
+[[ " $SUPPORTED_LOCALES " == *' zh_CN.UTF-8 '* ]] \
+    || die "SUPPORTED_LOCALES must include zh_CN.UTF-8"
+[[ "$DEFAULT_LOCALE" == zh_CN.UTF-8 ]] || die "default locale must be zh_CN.UTF-8"
+timezone_offset=$(TZ="$TIMEZONE" date +%z)
+[[ "$timezone_offset" == +0800 ]] || die "timezone must resolve to UTC+8: $TIMEZONE ($timezone_offset)"
 [[ -n "${IMAGE_SIZE_MIB:-}" ]] || die "IMAGE_SIZE_MIB is empty"
 [[ "${ROOT_PARTITION_NUMBER:-}" == 2 ]] || die "root partition must be partition 2"
 [[ "${BOOTLOADER_MEDIA:-}" == spi-nor ]] || die "unsupported bootloader media"
