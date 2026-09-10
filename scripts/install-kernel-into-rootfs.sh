@@ -57,13 +57,35 @@ dpkg-deb --extract "${image_packages[0]}" "$rootfs_dir"
 printf 'install-kernel: running depmod for %s\n' "$kernel_release"
 depmod -b "$rootfs_dir" "$kernel_release"
 install -d -m 0755 "$rootfs_dir/boot"
-# Use the same chroot/binfmt path that mmdebstrap used successfully while
-# customizing this rootfs. Explicit qemu -L prefixes are host-layout-sensitive
-# and can bypass the binfmt registration's correct loader handling.
+# Debian's qemu binfmt wrapper uses /etc/qemu-binfmt/<arch> as its ELF
+# interpreter prefix. That prefix is host-specific, so provide the equivalent
+# target-root mapping temporarily while mkinitramfs launches target helpers
+# such as ldconfig. Without it, GitHub's Ubuntu runner reports that
+# /lib/ld-linux-riscv64-lp64d.so.1 cannot be opened from nested target execs.
+qemu_path=$(command -v qemu-riscv64-static) || die "missing qemu-riscv64-static"
+qemu_target="$rootfs_dir/usr/bin/qemu-riscv64-static"
+qemu_binfmt_dir="$rootfs_dir/etc/qemu-binfmt"
+qemu_binfmt_link="$qemu_binfmt_dir/riscv64"
+qemu_binfmt_link_created=0
+cleanup_qemu() {
+    rm -f "$qemu_target"
+    if [[ "$qemu_binfmt_link_created" -eq 1 ]]; then
+        rm -f "$qemu_binfmt_link"
+        rmdir --ignore-fail-on-non-empty "$qemu_binfmt_dir"
+    fi
+}
+trap cleanup_qemu EXIT
+install -m 0755 "$qemu_path" "$qemu_target"
+if [[ ! -e "$qemu_binfmt_link" && ! -L "$qemu_binfmt_link" ]]; then
+    install -d -m 0755 "$qemu_binfmt_dir"
+    ln -s /usr "$qemu_binfmt_link"
+    qemu_binfmt_link_created=1
+fi
+[[ -e "$qemu_binfmt_link" ]] || die "could not provide $qemu_binfmt_link"
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
-chroot "$rootfs_dir" /usr/bin/env -i \
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-    LC_ALL=C DEBIAN_FRONTEND=noninteractive \
+    LC_ALL=C DEBIAN_FRONTEND=noninteractive QEMU_LD_PREFIX=/usr \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
 [[ -s "$rootfs_dir/boot/initrd.img-$kernel_release" ]] \
     || die "mkinitramfs did not create a usable initrd"
