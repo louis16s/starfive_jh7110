@@ -85,12 +85,12 @@ StarFive `soft_3rdpart` documents:
 * `CODAJ12`: JPEG/MJPEG codec package.
 * `OMX-IL`: vendor OpenMAX integration layer.
 
-The exact GPU candidate in the lock file is the Git LFS object `img-gpu-powervr-bin-1.19.6345021.tar.gz`, with SHA-256 `9dcaf2084b13e59c4e50a4a288f5de56f8e9ee631627a3e818591675bf61311a`. This checksum identifies the payload; it does not grant redistribution rights. Phase 1 therefore records a hard license gate:
+The exact GPU candidate in the lock file is the Git LFS object `img-gpu-powervr-bin-1.19.6345021.tar.gz`, with SHA-256 `9dcaf2084b13e59c4e50a4a288f5de56f8e9ee631627a3e818591675bf61311a`. The project owner has now confirmed that the GPU payload is licensed for inclusion in project artifacts. The build still keeps a hard audit gate:
 
-1. Do not commit the GPU/VPU binary payloads to this repository.
-2. Do not upload them to GitHub Actions artifacts or Releases until redistribution rights are confirmed.
-3. If redistribution is not allowed, implement a post-install downloader or a documented user-supplied package input and make the stable image build fail clearly when the required package is absent.
-4. Record every binary's license text, source URL, checksum and install path in a future `docs/licenses.md` and build manifest.
+1. Do not commit the GPU/VPU binary payloads to this repository; generate the package from the locked archive.
+2. The authorized PVR Debian package may be uploaded to GitHub Actions artifacts and Releases.
+3. If any future vendor payload lacks authorization, keep it out of artifacts and require a post-install downloader or documented user-supplied package input.
+4. Record every binary's license status, source URL, checksum and install path in the package `SOURCE` file and build manifest.
 
 ### Debian Trixie
 
@@ -151,7 +151,7 @@ This is an evidence status matrix, not a claim that Phase 1 has passed hardware 
 | Risk | Impact | Mitigation / exit criterion |
 | --- | --- | --- |
 | 8GB DTS/U-Boot memory selection | High; image may expose only 4GB or break DMA | Physical 8GB boot test on both boards; record `/proc/meminfo`, CMA, GPU/VPU and stress results |
-| PVR DDK license or missing redistribution permission | High; stable GPU image cannot be published | License gate before package/release; post-install downloader if needed |
+| PVR DDK license scope changes | High; stable GPU image cannot be published | Keep the owner's authorization recorded; fail packaging if the lock entry is no longer accepted |
 | Vendor PVR DDK versus 6.12 kernel ABI | High; no `/dev/dri/renderD*` or GPU crashes | Build/test exact locked kernel + DDK pair; never mix arbitrary `.so` files |
 | VPU integration uses CPU fallback | High; false PASS | Require decoder name, device nodes, traces and CPU budget in `test-vpu.sh` |
 | Mars bootloader silently selects VF2 DTB | High; Ethernet/USB/PMIC failures | Explicit Mars DTB, separate artifact names, boot log assertion and no generic fallback |

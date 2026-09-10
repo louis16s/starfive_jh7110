@@ -16,6 +16,57 @@ source "$BOARD_CONFIG"
 
 install -d -m 0755 "$STATE_DIR"
 
+setup_root_password() {
+    local password confirmation state
+
+    [[ "${DEFAULT_USER:-root}" == root ]] || die "only root default user is supported"
+    state=$(passwd -S root | awk '{print $2}')
+    case "$state" in
+        P)
+            return
+            ;;
+        L|LK|NP)
+            ;;
+        *)
+            die "cannot determine root password state: $state"
+            ;;
+    esac
+
+    command -v whiptail >/dev/null 2>&1 \
+        || die "whiptail is required for first-boot password setup"
+
+    while :; do
+        password=$(whiptail \
+            --title "JH7110 首次启动设置" \
+            --passwordbox "请为 root 设置登录密码（至少 8 个字符）：" \
+            10 72 3>&1 1>&2 2>&3) || die "password setup cancelled"
+        confirmation=$(whiptail \
+            --title "JH7110 首次启动设置" \
+            --passwordbox "请再次输入 root 密码：" \
+            10 72 3>&1 1>&2 2>&3) || die "password confirmation cancelled"
+
+        if (( ${#password} < 8 )); then
+            whiptail --title "密码太短" \
+                --msgbox "密码至少需要 8 个字符，请重新输入。" 8 60
+            continue
+        fi
+        if [[ "$password" != "$confirmation" ]]; then
+            whiptail --title "密码不一致" \
+                --msgbox "两次输入的密码不一致，请重新输入。" 8 60
+            continue
+        fi
+        if ! printf 'root:%s\n' "$password" | chpasswd; then
+            unset password confirmation
+            die "failed to set root password"
+        fi
+        passwd --unlock root
+        unset password confirmation
+        whiptail --title "设置完成" \
+            --msgbox "root 密码已设置，系统将继续启动图形桌面。" 8 64
+        break
+    done
+}
+
 if [[ -n "${BOARD_ID:-}" && "$BOARD_ID" != unconfigured ]]; then
     hostnamectl set-hostname "jh7110-$BOARD_ID"
 else
@@ -24,7 +75,7 @@ fi
 
 timezone_name=${TIMEZONE:-}
 [[ -n "$timezone_name" && -f "/usr/share/zoneinfo/$timezone_name" ]] \
-    || die "invalid timezone: ${timezone_name:-unset}"
+    || die "invalid timezone: ${TIMEZONE:-unset}"
 ln -sfn "/usr/share/zoneinfo/$timezone_name" /etc/localtime
 printf '%s\n' "$timezone_name" > /etc/timezone
 
@@ -57,6 +108,8 @@ if [[ -b "$root_source" ]] && command -v growpart >/dev/null 2>&1; then
     fi
 fi
 systemd-growfs / || die "could not grow the root filesystem"
+
+setup_root_password
 
 if command -v jh7110-info >/dev/null 2>&1; then
     jh7110-info > "$STATE_DIR/hardware-report.firstboot.txt"

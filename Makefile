@@ -3,7 +3,7 @@ SHELL := /bin/bash
 BOARD ?= visionfive2
 BUILD_TYPE ?= release
 
-.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi rootfs install-kernel image compress manifest
+.PHONY: check profile verify-sources host-check fetch kernel uboot opensbi gpu-package rootfs install-kernel image compress manifest
 
 check:
 	./scripts/validate-profile.sh "$(BOARD)"
@@ -30,6 +30,9 @@ uboot:
 
 opensbi:
 	./scripts/build-opensbi.sh "$(BOARD)"
+
+gpu-package:
+	./scripts/build-gpu-package.sh "$(BOARD)"
 
 rootfs:
 	./scripts/build-rootfs.sh "$(BOARD)"

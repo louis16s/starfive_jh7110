@@ -5,8 +5,16 @@ dbus-x11
 fonts-noto-cjk
 fonts-noto-color-emoji
 mesa-utils
+mesa-vulkan-drivers
 vulkan-tools
 drm-info
+glmark2-drm
+glmark2-wayland
+glmark2-x11
+libgl1-mesa-dri
+libegl1
+libgles2
+libgbm1
 xserver-xorg-core
 xserver-xorg-input-libinput
 x11-xserver-utils

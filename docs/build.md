@@ -20,7 +20,7 @@ The supported build host is Ubuntu 24.04 x86_64. The final build will install th
 ./build.sh mars check
 ```
 
-`verify-source-lock.sh` resolves the recorded branch/tag and reports when that human-readable reference has moved. The full commit SHA remains authoritative; `fetch-sources.sh` must fetch and verify that exact SHA before any build. A missing or moved reference therefore does not silently change the build. Vendor binary artifacts are identified but are not downloaded by this phase.
+`verify-source-lock.sh` resolves the recorded branch/tag and reports when that human-readable reference has moved. The full commit SHA remains authoritative; `fetch-sources.sh` must fetch and verify that exact SHA before any build. A missing or moved reference therefore does not silently change the build. The PVR archive is downloaded separately by the `gpu-package` target and is verified against its locked SHA256 before packaging.
 
 ## Phase 3 source and build entry points
 
@@ -37,6 +37,7 @@ Then the individual BSP components can be built when an Ubuntu x86_64 host with 
 make BOARD=visionfive2 uboot
 make BOARD=visionfive2 opensbi
 make BOARD=visionfive2 kernel
+make BOARD=visionfive2 gpu-package
 ```
 
 The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debian package version and copies the resulting `.deb` files to `build/<board>/packages/`. The locked vendor kernel generates a Debian build dependency on the historical `debhelper-compat (= 12)` and an unqualified target-architecture `libssl-dev`; Ubuntu 24.04 does not satisfy that exact cross-architecture metadata even when the native build tools are installed, so the CI installs the current debhelper implementation and passes `DPKG_FLAGS=-d` only to skip the metadata pre-check. The actual Debian packaging rules still run and failures remain fatal. It refuses to report success if the selected board DTB is absent. The package names remain kernel-release-derived (for example `linux-image-<release>.deb` and `linux-headers-<release>.deb`) so Debian package metadata stays truthful.
@@ -54,7 +55,7 @@ make BOARD=visionfive2 rootfs
 make BOARD=mars rootfs
 ```
 
-The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `jh7110` sudo-capable account, and installs `jh7110-firstboot.service`. The first-boot service sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
+The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `root` account, installs the selected board's licensed `jh7110-pvr-rogue` package when it has been built, and installs `jh7110-firstboot.service`. On local first boot, a Chinese `whiptail` screen asks for and confirms a root password before LightDM starts. The service then sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
 
 The default timezone is `Asia/Shanghai` (UTC+8). Both `zh_CN.UTF-8` and
 `en_US.UTF-8` are generated; the default locale is `zh_CN.UTF-8` with the
@@ -78,13 +79,15 @@ The script refuses to assemble an image when the board DTB, kernel Image or init
 
 ## CI and releases
 
-`.github/workflows/build.yml` uses Ubuntu 24.04 x86_64, caches the locked source checkouts, builds each selected board independently, and uploads the compressed image, kernel `.deb` files and manifest. `.github/workflows/release.yml` invokes the same reusable build on `v*` tags and publishes both board artifacts. The workflow does not download or redistribute the proprietary PVR/VPU payload; those packages remain a separate license-approved integration step.
+`.github/workflows/build.yml` uses Ubuntu 24.04 x86_64, caches the locked source checkouts, compiler objects and the PVR archive, builds each selected board independently, and uploads the compressed image, kernel `.deb` files, PVR `.deb` and manifest. `.github/workflows/release.yml` invokes the same reusable build on `v*` tags and publishes both board artifacts. The PVR package is generated from the exact StarFive archive in `sources.lock`; its redistribution is covered by the project owner's explicit license authorization and is recorded in the package `SOURCE` file.
 
 CI build success is not a hardware acceptance result. GPU acceleration,
 Vulkan/OpenGL, HDMI 1080p60, Wayland and audio must be tested on physical VF2
-and Mars boards. Until the licensed PVR package is integrated and those tests
-are recorded, the image must be treated as a desktop build candidate with
-possible software rendering.
+and Mars boards. The licensed PVR package is now integrated into the build,
+but its package/install success cannot prove the board-specific kernel ABI,
+firmware initialization or physical HDMI link; until those tests are recorded,
+the image remains a desktop build candidate with possible board-specific
+rendering issues.
 
 ## Build entry points
 

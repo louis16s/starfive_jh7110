@@ -1,12 +1,20 @@
 [Unit]
 Description=JH7110 first boot initialization
-After=local-fs.target systemd-udev-settle.service
-Wants=systemd-udev-settle.service
+After=local-fs.target systemd-logind.service
+Before=display-manager.service getty@tty1.service
+Conflicts=getty@tty1.service
 ConditionPathExists=!/var/lib/jh7110/firstboot.done
 
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/jh7110-firstboot
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
 RemainAfterExit=yes
 
 [Install]

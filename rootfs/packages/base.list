@@ -16,6 +16,7 @@ systemd-sysv
 systemd-timesyncd
 tzdata
 udev
+whiptail
 zram-tools
 
 # Filesystems, networking and hardware access.

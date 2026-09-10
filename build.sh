@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./build.sh BOARD [check|profile|verify-sources|host-check|fetch|kernel|uboot|opensbi|rootfs|install-kernel|image|compress|manifest]
+  ./build.sh BOARD [check|profile|verify-sources|host-check|fetch|kernel|uboot|opensbi|gpu-package|rootfs|install-kernel|image|compress|manifest]
 
 Boards:
   visionfive2   StarFive VisionFive 2 8GB
@@ -20,6 +20,7 @@ Phase 4 commands:
   kernel          Build the locked BSP kernel (requires the cross toolchain)
   uboot           Build the board-selected U-Boot (requires the cross toolchain)
   opensbi         Build the board-selected OpenSBI (requires the cross toolchain)
+  gpu-package     Build the locked, license-approved IMG BXE-4-32 PVR Debian package
   rootfs          Build the Debian Trixie riscv64 directory rootfs
   install-kernel  Extract the built kernel package and generate the initrd
   compress        Compress the assembled image and write a SHA256 file

@@ -3,19 +3,74 @@ set -Eeuo pipefail
 
 # Run from a terminal in the logged-in desktop, preserving DISPLAY/XAUTHORITY.
 failures=0
+warnings=0
+
+printf 'GPU kernel modules:\n'
+loaded_modules=0
+for module in pvrsrvkm pvr drm_starfive; do
+    if [[ -d "/sys/module/$module" ]]; then
+        printf '  LOADED %s\n' "$module"
+        loaded_modules=1
+    fi
+done
+if ((loaded_modules == 0)); then
+    module_dir="/lib/modules/$(uname -r)"
+    if [[ -d "$module_dir" ]] && find "$module_dir" -type f \
+        \( -iname '*pvrsrvkm*.ko*' -o -iname '*pvr*.ko*' -o -iname '*drm_starfive*.ko*' \) \
+        -print -quit | grep -q .; then
+        printf 'WARN GPU: PVR module exists but is not loaded\n'
+        warnings=$((warnings + 1))
+    else
+        printf 'FAIL GPU: no PVR kernel module loaded or installed\n'
+        failures=$((failures + 1))
+    fi
+fi
+
+printf 'GPU firmware and userspace:\n'
+firmware_count=0
+for firmware in /lib/firmware/rgx.*.36.50.54.182; do
+    if [[ -f "$firmware" ]]; then
+        printf '  FOUND %s\n' "$firmware"
+        firmware_count=$((firmware_count + 1))
+    fi
+done
+if ((firmware_count == 0)); then
+    printf 'FAIL GPU: IMG BXE firmware is missing\n'
+    failures=$((failures + 1))
+fi
+if [[ -e /usr/lib/libVK_IMG.so || -e /usr/lib/libVK_IMG.so.1 ]]; then
+    printf '  FOUND /usr/lib/libVK_IMG.so\n'
+else
+    printf 'FAIL GPU: IMG Vulkan ICD library is missing\n'
+    failures=$((failures + 1))
+fi
+
+printf 'Kernel DRM messages:\n'
+if dmesg_output=$(dmesg 2>&1); then
+    grep -iE 'pvr|pvrsrvkm|gpu|drm|starfive' <<<"$dmesg_output" | tail -80
+else
+    printf 'WARN GPU: dmesg is restricted for this user\n'
+    warnings=$((warnings + 1))
+fi
 probe() {
     local label=$1
     shift
     if ! command -v "$1" >/dev/null 2>&1; then
         printf 'WARN %s: 未安装 %s\n' "$label" "$1"
+        warnings=$((warnings + 1))
         return
     fi
     local result
     if result=$(timeout 30 "$@" 2>&1); then
         printf '%s\n' "$result"
         if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
-            printf 'FAIL %s: 检测到软件渲染，不能作为硬件加速通过\n' "$label"
-            failures=$((failures + 1))
+            if grep -Eiq 'powervr|img[ -]?bxe|rogue|img technologies' <<<"$result"; then
+                printf 'WARN %s: 同时发现硬件和软件渲染器；请确认当前会话选择 PowerVR\n' "$label"
+                warnings=$((warnings + 1))
+            else
+                printf 'FAIL %s: 仅检测到软件渲染，不能作为硬件加速通过\n' "$label"
+                failures=$((failures + 1))
+            fi
         else
             printf 'INFO %s: 命令成功；请核对设备和 renderer 是否为 PowerVR\n' "$label"
         fi
@@ -54,5 +109,9 @@ fi
 if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     probe EGL eglinfo -B
 fi
-printf '\n诊断失败计数: %s（命令成功不等于实板验收通过）\n' "$failures"
+if command -v glmark2-x11 >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+    printf '提示：可手动运行 glmark2-x11 或 glmark2-wayland 进行基准测试。\n'
+fi
+printf '\n诊断失败计数: %s，警告计数: %s（命令成功不等于实板验收通过）\n' \
+    "$failures" "$warnings"
 ((failures == 0))

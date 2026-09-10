@@ -24,6 +24,7 @@ readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/rootfs"
 readonly rootfs_dir="$output_dir/rootfs"
 readonly package_dir="$REPO_ROOT/rootfs/packages"
 readonly overlay_dir="$REPO_ROOT/rootfs/overlay"
+readonly board_package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 readonly snapshot="$DEBIAN_SNAPSHOT"
 readonly security_snapshot="$DEBIAN_SECURITY_SNAPSHOT"
 readonly debian_keyring=/usr/share/keyrings/debian-archive-keyring.gpg
@@ -84,6 +85,7 @@ TIMEZONE=$TIMEZONE
 DEFAULT_LOCALE=$DEFAULT_LOCALE
 DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 SUPPORTED_LOCALES='$SUPPORTED_LOCALES'
+DEFAULT_USER=$DEFAULT_USER
 EOF
 printf '%s\n' "$TIMEZONE" > "$rootfs_dir/etc/timezone"
 ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$rootfs_dir/etc/localtime"
@@ -116,12 +118,28 @@ cleanup_qemu() {
 }
 trap cleanup_qemu EXIT
 install -m 0755 "$(command -v qemu-riscv64-static)" "$qemu_target"
+
+shopt -s nullglob
+gpu_packages=("$board_package_dir"/jh7110-pvr-rogue_*.deb)
+shopt -u nullglob
+[[ ${#gpu_packages[@]} -le 1 ]] || die "multiple GPU packages found in $board_package_dir"
+gpu_deb_name=
+if [[ ${#gpu_packages[@]} -eq 1 ]]; then
+    gpu_deb_name=$(basename "${gpu_packages[0]}")
+    install -m 0644 "${gpu_packages[0]}" "$rootfs_dir/tmp/$gpu_deb_name"
+fi
+
 chroot "$rootfs_dir" /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
     DEFAULT_LOCALE="$DEFAULT_LOCALE" DEFAULT_LANGUAGE="$DEFAULT_LANGUAGE" \
-    SUPPORTED_LOCALES="$SUPPORTED_LOCALES" \
+    SUPPORTED_LOCALES="$SUPPORTED_LOCALES" DEFAULT_USER="$DEFAULT_USER" \
+    GPU_DEB_NAME="$gpu_deb_name" \
     /bin/bash -Eeuc '
+        if [[ -n "${GPU_DEB_NAME:-}" ]]; then
+            dpkg --install "/tmp/$GPU_DEB_NAME"
+            rm -f "/tmp/$GPU_DEB_NAME"
+        fi
         : > /etc/locale.gen
         for locale_name in $SUPPORTED_LOCALES; do
             printf "%s UTF-8\\n" "$locale_name" >> /etc/locale.gen
@@ -129,8 +147,7 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         locale-gen
         update-locale LANG="$DEFAULT_LOCALE" LANGUAGE="$DEFAULT_LANGUAGE" \
             LC_MESSAGES="$DEFAULT_LOCALE"
-        useradd --create-home --shell /bin/bash --groups sudo,audio,video,input,plugdev,netdev jh7110
-        passwd --lock jh7110
+        passwd --lock root
         systemctl preset-all
         systemctl enable NetworkManager systemd-timesyncd ssh lightdm
         systemctl set-default graphical.target

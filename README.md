@@ -9,37 +9,44 @@
 
 ## 当前状态
 
-Run 26 已成功生成两套镜像和内核 Debian 包：
+Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的基线运行。
+本次更新后的下一次 Actions 构建还会额外生成并安装锁定的 PVR GPU 包：
 
 - jh7110-desktop-vf2-8g.img.xz
 - jh7110-desktop-mars-8g.img.xz
 - linux-image-6.12.5+_1.0.0_riscv64.deb
 - linux-headers-6.12.5+_1.0.0_riscv64.deb
 - linux-libc-dev_1.0.0_riscv64.deb
+- jh7110-pvr-rogue_1.19.6345021-1_riscv64.deb（下一次构建起）
 
-镜像已经包含 Debian 基础系统、XFCE、LightDM、Firefox ESR、Python 3、开发工具、PipeWire、NetworkManager、Podman 和硬件诊断工具。
+镜像已经包含 Debian 基础系统、XFCE、LightDM、Firefox ESR、Python 3、开发工具、PipeWire、NetworkManager、Podman、Mesa 图形工具和硬件诊断工具；下一次构建还会将获授权的 StarFive PVR runtime 纳入镜像。
 
 构建成功不等于实板验收成功。当前仓库仍需在实际 VisionFive 2 和 Mars 上验证 HDMI 1080p60、GPU 硬件渲染、Vulkan、VPU、音频、USB 外设和桌面启动。
 
 ## 默认账户与开机密码
 
-当前 CI 镜像没有预设开机密码，也没有 starfive、jh7110 或其他通用密码。
+镜像不会写入固定的通用密码。构建时 root 账户保持 locked 状态，首次
+启动会在本地 tty1 自动显示中文设密界面：输入两次不少于 8 位的密码，
+确认后才启动 LightDM。密码只写入目标设备，不会进入 GitHub Actions、
+日志或镜像文件。
 
-构建脚本会创建用户：
+默认账户为：
 
 ~~~text
-用户名：jh7110
-密码：未设置，账户处于 locked 状态
-权限：sudo、audio、video、input、plugdev、netdev
+用户名：root
+密码：首次启动时由用户设置
+权限：root
 ~~~
 
-因此当前 Artifact 不是可以直接在 LightDM 登录的最终用户发行版。若已经能够通过串口或维护 shell 获得 root 权限，可以设置密码：
+首次启动设密服务完成后，LightDM 允许手动输入用户名，使用 root 登录。
+如果只接串口而看不到 tty1，可在 root shell 中执行：
 
 ~~~sh
-passwd jh7110
+systemctl restart jh7110-firstboot.service
 ~~~
 
-设置后即可使用 jh7110 登录图形桌面，再立即修改为自己的强密码。不要在公开镜像中写入固定默认密码。
+不要在公开环境中复用简单密码；root 通过 SSH 登录也应在首次启动后按需
+配置安全策略。
 
 ## 键盘和鼠标
 
@@ -165,13 +172,18 @@ U-Boot、OpenSBI 和板级启动介质配置必须按板型区分。当前配置
 
 内核构建会检查 DRM、StarFive display controller、Inno HDMI 和 IMG/PVR 内核选项，Mars 还会单独生成和检查 Mars desktop DTB。
 
-但当前仓库没有重新分发 StarFive PVR DDK、IMG firmware、完整 GPU userspace 或 vendor VPU payload。因许可证和可再分发性限制，当前镜像不能保证 pvr、Vulkan、OpenGL ES 或硬件视频解码已经可用，也不能仅凭 CI 成功宣称 GPU/HDMI 实板通过。
+本次更新将 sources.lock 固定的 StarFive PVR DDK 1.19.6345021 制作为
+`jh7110-pvr-rogue` Debian 包，包含 IMG BXE-4-32 firmware、PVR userspace、
+Vulkan/OpenCL ICD 和官方 `rc.pvr`。项目所有者已确认这些 GPU 包获得许可，
+构建时仍会验证官方归档 SHA256，并在包内保留来源和授权记录。CI 能验证
+打包和安装，不能替代 VF2/Mars 实板上的 GPU ABI、HDMI 热插拔和显示器验收。
 
 登录后可运行：
 
 ~~~sh
 jh7110-info
 jh7110-test-graphics
+systemctl status jh7110-pvr.service
 drm_info
 vulkaninfo
 eglinfo
@@ -191,7 +203,10 @@ make BOARD=visionfive2 image
 make BOARD=mars image
 ~~~
 
-源码版本固定在 sources.lock，不得使用 floating branch 或未锁定的 HEAD。GitHub Actions 支持 workflow_dispatch，可选择 visionfive2、mars 或 all，并上传镜像、内核 deb、SHA256、manifest 和构建信息。
+源码版本固定在 sources.lock，不得使用 floating branch 或未锁定的 HEAD。
+GitHub Actions 支持 workflow_dispatch，可选择 visionfive2、mars 或 all，
+并上传镜像、内核 deb、GPU deb、SHA256、manifest 和构建信息。单独构建
+GPU 包可执行 `make BOARD=mars gpu-package`。
 
 ## 诊断和测试
 
@@ -203,7 +218,9 @@ sudo jh7110-config
 sudo jh7110-selftest
 ~~~
 
-测试脚本和完整测试矩阵仍在补充中；当前可使用 jh7110-info、jh7110-test-graphics 以及标准 Linux 工具进行检查。硬件不存在的能力应报告 SKIP，不能伪造为 PASS。
+当前可使用 jh7110-info、jh7110-test-graphics 以及标准 Linux 工具进行检查。
+硬件不存在的能力应报告 SKIP，不能伪造为 PASS。GPU 测试发现
+llvmpipe、softpipe 或 lavapipe 时会失败，避免把软件渲染报告为硬件加速。
 
 ## 目录和文档
 
@@ -211,17 +228,19 @@ sudo jh7110-selftest
 - docs/architecture.md：构建图和板级分离原则
 - docs/build.md：本地构建和 CI
 - docs/graphics.md：HDMI/DRM/GPU 当前状态
+- docs/licenses.md：GPU 等二进制组件的来源、哈希和授权记录
 - sources.lock：源码 commit/tag 锁定
 - configs/hardware-matrix.yaml：板级能力矩阵
 
 ## 已知限制
 
-1. 当前镜像没有默认登录密码，jh7110 初始为锁定账户；需要先通过维护入口设置密码。
-2. GPU PVR DDK、firmware 和完整 userspace 尚未作为可再分发包集成。
-3. HDMI、Wayland、Vulkan、VPU、音频和 USB 键鼠仍需真实硬件验收。
-4. Mars 的 NVMe 默认按能力矩阵报告为 SKIP，不能套用 VisionFive 2 的 NVMe 结论。
-5. Chromium 暂未提供官方 riscv64 Trixie 安装包。
+1. root 密码必须在首次启动 tty1 设置，串口环境可重启 jh7110-firstboot.service。
+2. PVR 包已纳入构建，但 HDMI、Wayland、Vulkan、VPU、音频和 USB 键鼠仍需真实硬件验收。
+3. Mars 的 NVMe 默认按能力矩阵报告为 SKIP，不能套用 VisionFive 2 的 NVMe 结论。
+4. Chromium 暂未提供官方 riscv64 Trixie 安装包。
 
 ## 许可证
 
-本工程脚本、配置和文档按仓库中的 LICENSE 发布。Linux、U-Boot、OpenSBI、Debian、Mesa、PVR 和 VPU 组件分别遵循各自上游或厂商许可证。任何加入 vendor GPU/VPU 二进制的发布版本都必须先完成许可证和再分发权限核查。
+本工程脚本、配置和文档按仓库中的 LICENSE 发布。Linux、U-Boot、OpenSBI、Debian、Mesa、PVR 和 VPU 组件分别遵循各自上游或厂商许可证。PVR
+再分发授权由项目所有者确认，并在生成包的 SOURCE 文件中留痕；其他
+vendor GPU/VPU 二进制仍须单独核查许可证。

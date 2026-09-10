@@ -17,6 +17,7 @@ command -v sha256sum >/dev/null 2>&1 || die "missing sha256sum"
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board"
 readonly manifest="$output_dir/build-manifest.txt"
 mkdir -p "$output_dir"
+mkdir -p "$output_dir/packages"
 
 {
     printf 'project=%s\n' "$PROJECT_NAME"
@@ -32,11 +33,19 @@ mkdir -p "$output_dir"
     printf 'timezone_utc_offset=UTC%s:%s\n' "${timezone_offset:0:3}" "${timezone_offset:3:2}"
     printf 'locale_default=%s\n' "$DEFAULT_LOCALE"
     printf 'locales_supported=%s\n' "$SUPPORTED_LOCALES"
+    printf 'default_user=%s\n' "$DEFAULT_USER"
     printf 'kernel_source=%s\n' "$KERNEL_SOURCE"
     printf 'kernel_dtb=%s\n' "$KERNEL_DTB"
     printf 'uboot_source=%s\n' "$UBOOT_SOURCE"
     printf 'opensbi_source=%s\n' "$OPENSBI_SOURCE"
     printf 'bootloader_media=%s\n' "$BOOTLOADER_MEDIA"
+    gpu_package=$(find "$output_dir/packages" -maxdepth 1 -type f \
+        -name 'jh7110-pvr-rogue_*.deb' -print -quit)
+    if [[ -n "$gpu_package" ]]; then
+        printf 'gpu_package=%s\n' "${gpu_package#"$REPO_ROOT/"}"
+    else
+        printf 'gpu_package=not-built\n'
+    fi
     printf 'source_lock_sha256=%s\n' "$(sha256sum "$REPO_ROOT/$SOURCE_LOCK" | awk '{print $1}')"
     printf 'repository_commit=%s\n' "$(git -C "$REPO_ROOT" rev-parse HEAD)"
     printf 'build_host=%s\n' "$(uname -a)"

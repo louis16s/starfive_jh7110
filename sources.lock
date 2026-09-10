@@ -75,11 +75,12 @@ sources:
     ref: 1.19.6345021
     commit: b60da16be1b36453aa46599889c28310fd148fb8
     role: stable-bsp-gpu-candidate
-    license: proprietary-license-review-required
+    license: proprietary-vendor-license-accepted
     sha256: 9dcaf2084b13e59c4e50a4a288f5de56f8e9ee631627a3e818591675bf61311a
     notes: >-
       The Git LFS object is 57,719,888 bytes.  The repository README states
-      that IMG_GPU is binary and not open source.
+      that IMG_GPU is binary and not open source.  Project owner has confirmed
+      that this payload is licensed for inclusion in the project artifacts.
 
   milkv_mars_sdk:
     name: Milk-V Mars official Buildroot SDK

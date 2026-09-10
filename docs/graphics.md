@@ -20,17 +20,20 @@ Ethernet PHY、PCIe、USB、电源和板型信息。DC endpoint 1 与 HDMI 互�
 VF2 使用原 BSP v1.3B DTS。两个板型都需实际确认 HDMI 1080p60 和热插拔。
 Mars 其他 PCB 修订版引脚与电源对应关系尚需核对。
 
-## GPU 剩余阻碍
+## GPU 集成
 
-构建检查 DRM、Verisilicon、HDMI 和 IMG Rogue 必须启用。
-官方 `img-gpu-powervr-bin-1.19.6345021.tar.gz` 已下载检查，SHA256 与
-sources.lock 一致。归档内未找到 LICENSE/COPYING/NOTICE；官方 README
-称其为非开源二进制，尚无明确可再分发授权。
+构建检查 DRM、Verisilicon、HDMI 和 IMG Rogue 必须启用。工程从
+`sources.lock` 中固定的 StarFive `img-gpu-powervr-bin-1.19.6345021.tar.gz`
+生成 `jh7110-pvr-rogue_1.19.6345021-1_riscv64.deb`，构建时校验归档
+SHA256，并通过 dpkg 安装 firmware、PVR userspace、Vulkan ICD 和
+`rc.pvr`。用户已确认该 GPU 包具备镜像分发许可；包内 `SOURCE` 文件仍
+记录来源、版本、哈希和授权说明，便于审计。
 
-因此本次不将该归档放入镜像。还需要确认授权、与内核匹配的 DDK ABI、
-patched Mesa 的 libpvr_dri_support 接口、GBM/EGL、Vulkan ICD 和 firmware
-初始化路径，并制作有依赖和许可证记录的 Debian 包。单独拷贝 libGLES
-或启用 GPU 节点无法完成这些工作。当前 GPU 硬件加速仍为未完成。
+安装包会启用 `jh7110-pvr.service`，由官方 `rc.pvr` 负责加载
+`pvrsrvkm`/`drm_starfive` 并启动 PVR 服务。Mesa 的 GBM/EGL、Wayland
+和通用 Vulkan loader 来自 Debian；真正的 PowerVR 渲染取决于选中的
+6.12 BSP 内核、Mars/VF2 DTB、firmware 和 DDK ABI 是否匹配。CI 能验证
+打包和安装，不能代替两块实板的 DRM/Vulkan/HDMI 验收。
 
 ## 实板检查
 
@@ -43,6 +46,12 @@ HDMI 状态/模式、Vulkan、EGL 和 OpenGL，软件渲染或探测失败返回
 `journalctl -b -k`，关注 drm/hdmi/pvr、deferred probe 和电源错误。
 HDMI 输出与 GPU 渲染是两条不同路径，软件渲染也可能显示 XFCE。
 
-当前登录用户仍为锁定的 jh7110，尚无首次启动设密界面；实板测试前需
-通过可信的离线配置设置凭据。项目仍需补齐登录引导、内核包安装登记和
-升级启动菜单、GPU/VPU 集成及实板验收，CI 成功不能当作可发布桌面验收。
+镜像默认使用锁定的 root 账户。首次启动服务在 tty1 显示中文设密界面，
+密码确认后才允许 LightDM 启动；LightDM 配置为手动输入用户名，因此
+可以使用 root 登录。没有写入任何固定默认密码。串口维护时可执行
+`systemctl restart jh7110-firstboot.service` 重新进入流程。
+
+在桌面终端运行 `jh7110-test-graphics`。它检查 PVR 内核模块、firmware、
+DRM 节点、HDMI 状态、Vulkan、EGL 和 OpenGL；检测到 llvmpipe/softpipe/
+lavapipe 会失败，避免把 CPU 软件渲染误报为 GPU 通过。HDMI 输出与 GPU
+渲染是两条不同路径，软件渲染也可能显示 XFCE。
