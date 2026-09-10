@@ -51,8 +51,22 @@ mkdir -p "$output_dir/packages"
     printf 'build_host=%s\n' "$(uname -a)"
     printf 'build_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf '\nartifacts:\n'
-    find "$output_dir" -maxdepth 3 -type f ! -path "$manifest" -print0 | sort -z | while IFS= read -r -d '' artifact; do
-        printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
+    find "$output_dir/image" "$output_dir/packages" -maxdepth 1 -type f \
+        \( -name '*.img.xz' -o -name '*.img.xz.sha256' -o -name '*.deb' \) -print0 |
+        sort -z | while IFS= read -r -d '' artifact; do
+            printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
+        done
+    find "$output_dir/u-boot" "$output_dir/u-boot/spl" -maxdepth 1 \
+        -type f -name 'u-boot*' -print0 | sort -z |
+        while IFS= read -r -d '' artifact; do
+            printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
+        done
+    for artifact in \
+        "$output_dir/opensbi/platform/generic/firmware/fw_dynamic.bin" \
+        "$output_dir/kernel/arch/riscv/boot/dts/starfive/$KERNEL_DTB"; do
+        if [[ -f "$artifact" ]]; then
+            printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
+        fi
     done
 } > "$manifest"
 printf 'manifest: %s\n' "$manifest"

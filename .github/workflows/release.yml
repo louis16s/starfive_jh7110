@@ -39,8 +39,12 @@ jobs:
             release/visionfive2/**/*.img.xz
             release/visionfive2/**/*.sha256
             release/visionfive2/**/*.deb
+            release/visionfive2/**/*.bin
+            release/visionfive2/**/*.dtb
             release/visionfive2/**/build-manifest.txt
             release/mars/**/*.img.xz
             release/mars/**/*.sha256
             release/mars/**/*.deb
+            release/mars/**/*.bin
+            release/mars/**/*.dtb
             release/mars/**/build-manifest.txt
