@@ -48,7 +48,16 @@ for name, entry in sources.items():
             break
         if resolved is None:
             resolved = sha
-    if resolved != expected:
-        raise SystemExit(f"{name}: lock mismatch {resolved} != {expected}")
-    print(f"LOCK OK {name}: {expected}")
+    if resolved == expected:
+        print(f"LOCK OK {name}: {expected}")
+    elif resolved:
+        print(
+            f"LOCK WARN {name}: {ref} moved from {expected} to {resolved}; "
+            "the pinned commit remains authoritative"
+        )
+    else:
+        print(
+            f"LOCK WARN {name}: {ref} is unavailable at the remote; "
+            "the pinned commit will be checked during fetch"
+        )
 PY

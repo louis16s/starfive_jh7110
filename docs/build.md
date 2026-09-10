@@ -20,7 +20,7 @@ The supported build host is Ubuntu 24.04 x86_64. The final build will install th
 ./build.sh mars check
 ```
 
-`verify-source-lock.sh` resolves the recorded branch/tag and rejects a moving or changed revision. Vendor binary artifacts are identified but are not downloaded by this phase.
+`verify-source-lock.sh` resolves the recorded branch/tag and reports when that human-readable reference has moved. The full commit SHA remains authoritative; `fetch-sources.sh` must fetch and verify that exact SHA before any build. A missing or moved reference therefore does not silently change the build. Vendor binary artifacts are identified but are not downloaded by this phase.
 
 ## Phase 3 source and build entry points
 
