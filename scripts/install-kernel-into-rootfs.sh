@@ -57,19 +57,11 @@ dpkg-deb --extract "${image_packages[0]}" "$rootfs_dir"
 printf 'install-kernel: running depmod for %s\n' "$kernel_release"
 depmod -b "$rootfs_dir" "$kernel_release"
 install -d -m 0755 "$rootfs_dir/boot"
-qemu_path=$(command -v qemu-riscv64-static) || die "missing qemu-riscv64-static"
-cleanup() {
-    rm -f "$rootfs_dir/usr/bin/qemu-riscv64-static"
-}
-trap cleanup EXIT
-install -m 0755 "$qemu_path" "$rootfs_dir/usr/bin/qemu-riscv64-static"
-# Invoke the target command through the copied static emulator explicitly.
-# Debian Trixie stores the riscv64 loader in /usr/lib on merged-/usr systems,
-# while the ELF interpreter name remains /lib/ld-linux-riscv64-lp64d.so.1.
-# The rootfs loader prefix makes /lib in the target ELF interpreter resolve
-# inside the chroot, independent of the host binfmt registration.
+# Use the same chroot/binfmt path that mmdebstrap used successfully while
+# customizing this rootfs. Explicit qemu -L prefixes are host-layout-sensitive
+# and can bypass the binfmt registration's correct loader handling.
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
-chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /usr/bin/env -i \
+chroot "$rootfs_dir" /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
