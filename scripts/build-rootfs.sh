@@ -93,20 +93,26 @@ ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$rootfs_dir/etc/localtime"
 install -d -m 0755 "$rootfs_dir/etc/apt/sources.list.d"
 cat > "$rootfs_dir/etc/apt/sources.list.d/debian.sources" <<EOF
 Types: deb
-URIs: $snapshot
+URIs: $DEBIAN_MAINLAND_MIRROR $DEBIAN_OFFICIAL_MIRROR
 Suites: $DEBIAN_SUITE
 Components: main contrib non-free-firmware
 Architectures: $TARGET_ARCH
-Check-Valid-Until: no
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 Types: deb
-URIs: $security_snapshot
+URIs: $DEBIAN_SECURITY_MAINLAND_MIRROR $DEBIAN_SECURITY_OFFICIAL_MIRROR
 Suites: ${DEBIAN_SUITE}-security
 Components: main contrib non-free-firmware
 Architectures: $TARGET_ARCH
-Check-Valid-Until: no
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 rm -f "$rootfs_dir/etc/apt/sources.list"
+install -d -m 0755 "$rootfs_dir/etc/apt/apt.conf.d"
+cat > "$rootfs_dir/etc/apt/apt.conf.d/80-jh7110-network" <<'EOF'
+Acquire::Retries "5";
+Acquire::http::Timeout "15";
+Acquire::https::Timeout "15";
+EOF
 
 install -d -m 0755 "$rootfs_dir/etc/systemd/system/multi-user.target.wants"
 ln -s ../jh7110-firstboot.service \

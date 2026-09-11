@@ -62,6 +62,13 @@ The default timezone is `Asia/Shanghai` (UTC+8). Both `zh_CN.UTF-8` and
 English fallback chain `zh_CN:zh:en_US:en`. These values are written to the
 rootfs and recorded in `build-manifest.txt`.
 
+The build uses the locked Debian snapshots above. The installed image uses
+deb822 APT sources with the Tsinghua mainland mirror first and Debian official
+endpoints second, so normal `apt update`/`apt upgrade` can fall back when the
+mainland mirror is unavailable. `jh7110-mirror status` checks the mainland
+endpoints; `jh7110-mirror mainland` and `jh7110-mirror official` change the
+priority order without changing the locked build snapshot.
+
 ## Phase 5 removable-media image
 
 The image assembler creates a GPT image with a 512 MiB FAT32 `/boot` partition and an ext4 root partition. The image size is a board-profile setting, not a target storage assumption. OpenSBI/U-Boot remain in the board's SPI-NOR boot path; the image carries the kernel, initrd, DTB and `extlinux.conf` only.

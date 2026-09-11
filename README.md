@@ -108,6 +108,25 @@ Chromium 当前没有预装。Debian Trixie riscv64 没有可直接使用的官�
 
 首次启动服务会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs。完成后会自动禁用自身。
 
+## 软件源和大陆网络适配
+
+镜像构建阶段仍使用 `sources.lock` 中锁定的 Debian snapshot，保证构建可重复；安装到设备后的 APT 默认优先使用清华 Debian 镜像，并在镜像不可用时由 deb822 多 URI 配置自动回退到 Debian 官方镜像。安全更新同样配置了大陆镜像和 `security.debian.org` 官方回退。
+
+查看镜像连通性和当前配置：
+
+~~~sh
+sudo jh7110-mirror status
+~~~
+
+切换顺序：
+
+~~~sh
+sudo jh7110-mirror mainland
+sudo jh7110-mirror official
+~~~
+
+APT 使用 HTTPS、Debian archive keyring 和重试机制；大陆镜像故障不会导致系统永久失去官方软件源。
+
 ## 下载与校验
 
 从 GitHub Actions 的成功运行中下载对应 Artifact，解压后校验：

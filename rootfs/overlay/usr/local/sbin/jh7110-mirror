@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly CONFIG_FILE=/etc/jh7110/mirrors.conf
+readonly SOURCES_FILE=/etc/apt/sources.list.d/debian.sources
+readonly SUITE=trixie
+
+die() {
+    echo "jh7110-mirror: $*" >&2
+    exit 1
+}
+
+[[ -r "$CONFIG_FILE" ]] || die "missing $CONFIG_FILE"
+# shellcheck source=/etc/jh7110/mirrors.conf
+source "$CONFIG_FILE"
+[[ $(id -u) -eq 0 ]] || die "must run as root"
+command -v install >/dev/null 2>&1 || die "install is required"
+command -v curl >/dev/null 2>&1 || die "curl is required"
+
+write_sources() {
+    local debian_primary=$1
+    local debian_fallback=$2
+    local security_primary=$3
+    local security_fallback=$4
+    local temporary_file
+
+    temporary_file=$(mktemp)
+    trap 'rm -f "$temporary_file"' RETURN
+    cat > "$temporary_file" <<EOF
+Types: deb
+URIs: $debian_primary $debian_fallback
+Suites: $SUITE
+Components: main contrib non-free-firmware
+Architectures: riscv64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: $security_primary $security_fallback
+Suites: ${SUITE}-security
+Components: main contrib non-free-firmware
+Architectures: riscv64
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+    install -d -m 0755 "$(dirname "$SOURCES_FILE")"
+    install -o root -g root -m 0644 "$temporary_file" "$SOURCES_FILE"
+    trap - RETURN
+    rm -f "$temporary_file"
+}
+
+mirror_reachable() {
+    local base_url=$1
+    local suite_name=$2
+    curl --fail --silent --show-error --location --max-time 8 \
+        --output /dev/null "$base_url/dists/$suite_name/Release"
+}
+
+show_status() {
+    printf 'Debian mainland mirror: %s\n' "$JH7110_MIRROR_DEBIAN_CN"
+    printf 'Debian official fallback: %s\n' "$JH7110_MIRROR_DEBIAN_OFFICIAL"
+    printf 'Security mainland mirror: %s\n' "$JH7110_MIRROR_SECURITY_CN"
+    printf 'Security official fallback: %s\n' "$JH7110_MIRROR_SECURITY_OFFICIAL"
+    if mirror_reachable "$JH7110_MIRROR_DEBIAN_CN" "$SUITE" \
+        && mirror_reachable "$JH7110_MIRROR_SECURITY_CN" "${SUITE}-security"; then
+        echo "mainland_status=reachable"
+    else
+        echo "mainland_status=unreachable-or-partial"
+    fi
+}
+
+[[ $# -le 1 ]] || die "usage: $0 [auto|mainland|official|status]"
+mode=${1:-auto}
+case "$mode" in
+    auto)
+        # APT receives both URIs in priority order and can fall back if the
+        # first endpoint later becomes unavailable.
+        write_sources \
+            "$JH7110_MIRROR_DEBIAN_CN" "$JH7110_MIRROR_DEBIAN_OFFICIAL" \
+            "$JH7110_MIRROR_SECURITY_CN" "$JH7110_MIRROR_SECURITY_OFFICIAL"
+        ;;
+    mainland)
+        write_sources \
+            "$JH7110_MIRROR_DEBIAN_CN" "$JH7110_MIRROR_DEBIAN_OFFICIAL" \
+            "$JH7110_MIRROR_SECURITY_CN" "$JH7110_MIRROR_SECURITY_OFFICIAL"
+        ;;
+    official)
+        write_sources \
+            "$JH7110_MIRROR_DEBIAN_OFFICIAL" "$JH7110_MIRROR_DEBIAN_CN" \
+            "$JH7110_MIRROR_SECURITY_OFFICIAL" "$JH7110_MIRROR_SECURITY_CN"
+        ;;
+    status)
+        show_status
+        ;;
+    *)
+        die "unknown mode: $mode"
+        ;;
+esac
+
+if [[ "$mode" != status ]]; then
+    echo "APT mirror order updated: $mode (mainland first with official fallback)"
+fi

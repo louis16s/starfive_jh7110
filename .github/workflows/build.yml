@@ -51,18 +51,18 @@ jobs:
       CCACHE_MAXSIZE: 1G
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Cache locked source checkouts
         id: sources-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: sources
           key: ${{ runner.os }}-${{ matrix.board }}-sources-${{ hashFiles('sources.lock') }}
 
       - name: Restore compiler cache
         id: compiler-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -90,7 +90,7 @@ jobs:
 
       - name: Run shellcheck
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: shellcheck --severity=error scripts/*.sh build.sh board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-test-graphics
+        run: shellcheck --severity=error scripts/*.sh build.sh board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror
 
       - name: Fetch locked BSP sources
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
@@ -98,14 +98,14 @@ jobs:
 
       - name: Restore locked PVR payload cache
         id: pvr-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: sources/gpu
           key: ubuntu-24.04-${{ matrix.board }}-pvr-${{ hashFiles('sources.lock') }}
 
       - name: Save fetched sources before compilation
         if: steps.sources-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: sources
           key: ${{ steps.sources-cache.outputs.cache-primary-key }}
@@ -125,14 +125,14 @@ jobs:
 
       - name: Save locked PVR payload cache
         if: ${{ !cancelled() && steps.compile.outcome == 'success' && steps.pvr-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: sources/gpu
           key: ubuntu-24.04-${{ matrix.board }}-pvr-${{ hashFiles('sources.lock') }}
 
       - name: Save compiler cache before rootfs build
         if: ${{ !cancelled() && (steps.compile.outcome == 'success' || steps.compile.outcome == 'failure') }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload build artifacts
         if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: jh7110-desktop-${{ matrix.board }}-${{ env.BUILD_TYPE }}
           if-no-files-found: error
