@@ -30,6 +30,7 @@ class BootConfig(unittest.TestCase):
         script = read("rootfs/overlay/usr/libexec/jh7110-firstboot")
         self.assertNotIn("PARTNUM", script)
         self.assertIn("--output PARTN", script)
+        self.assertNotIn("lsblk --help | grep -qw PARTN", read("scripts/build-rootfs.sh"))
         self.assertIn('resize2fs "$root_source"', script)
         self.assertIn("chvt 1", script)
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):

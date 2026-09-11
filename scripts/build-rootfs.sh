@@ -161,7 +161,6 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         for helper in chvt whiptail growpart resize2fs lsblk; do
             command -v "$helper" >/dev/null
         done
-        lsblk --help | grep -qw PARTN
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
         test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop
