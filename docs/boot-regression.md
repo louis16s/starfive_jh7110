@@ -2,6 +2,24 @@
 
 ## 结论范围
 
+### build-36 实际镜像检查（2026-09-11）
+
+已对 Downloads 中解压出的 `jh7110-desktop-mars-8g.img.xz` 完整计算 SHA256，
+确认是发布的 `d14a7796786417528e124557aa99cbcdfff51ad0c48710be39edbb52b39e69ee`。
+解压后用 debugfs 只读检查 ext4：`/lib` 是普通目录，只有 `modules`；
+`/lib/ld-linux-riscv64-lp64d.so.1` 不存在，而 `/usr/lib/riscv64-linux-gnu/` 下的
+加载器仍存在。这是可以阻止根文件系统用户态启动的缺陷，不是仅凭 HDMI 标志推测。
+
+内核包包含真实的 `./lib/` 目录；安装脚本直接 `dpkg-deb --extract` 到 rootfs，
+破坏了 Debian 的 `/lib -> usr/lib`。随后构建 initramfs 使用 QEMU `-L /usr`，
+绕过实际运行时 `/lib` 路径，让镜像构建仍能成功。
+
+修复为先解到独立临时目录，通过 `rsync --keep-dirlinks` 合并；
+合并前拒绝损坏的 merged-usr 根目录，合并后用 QEMU `-L /` 执行目标
+`/bin/true` 和 `/sbin/init --version`。组装 ext4 后再次检查三个兼容链接和 ELF 加载器。
+已用实际发布的 kernel deb 验证合并保留加载器，并测试重复合并、损坏根目录拒绝行为。
+实板是否还存在其他问题仍需要新镜像启动日志确认。
+
 用户反馈较早镜像可显示 LightDM，加入 GPU 和首次设密后停留在 Milk-V 标志。
 未取得该设备串口、内核及 Xorg 日志，因此不能将停留标志直接判定为某一驱动故障，
 也不能将 CI 成功视为 HDMI 实机恢复。标志可能是 bootloader 留下的最后一帧。

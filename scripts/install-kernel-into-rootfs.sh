@@ -53,7 +53,12 @@ printf 'install-kernel: riscv64 loader %s -> %s\n' \
     "$target_loader" "$(readlink -f "$compat_loader")"
 
 printf 'install-kernel: extracting %s\n' "${image_packages[0]}"
-dpkg-deb --extract "${image_packages[0]}" "$rootfs_dir"
+kernel_payload=$(mktemp -d "$package_dir/.kernel-payload.XXXXXX")
+trap 'rm -rf "$kernel_payload"' EXIT
+dpkg-deb --extract "${image_packages[0]}" "$kernel_payload"
+bash "$REPO_ROOT/scripts/merge-kernel-payload.sh" "$kernel_payload" "$rootfs_dir"
+[[ -L "$rootfs_dir/lib" && -e "$compat_loader" ]] \
+    || die "kernel extraction broke merged-usr or the ELF interpreter"
 printf 'install-kernel: running depmod for %s\n' "$kernel_release"
 depmod -b "$rootfs_dir" "$kernel_release"
 install -d -m 0755 "$rootfs_dir/boot"
@@ -68,6 +73,7 @@ qemu_binfmt_dir="$rootfs_dir/etc/qemu-binfmt"
 qemu_binfmt_link="$qemu_binfmt_dir/riscv64"
 qemu_binfmt_link_created=0
 cleanup_qemu() {
+    rm -rf "$kernel_payload"
     rm -f "$qemu_target"
     if [[ "$qemu_binfmt_link_created" -eq 1 ]]; then
         rm -f "$qemu_binfmt_link"
@@ -82,6 +88,10 @@ if [[ ! -e "$qemu_binfmt_link" && ! -L "$qemu_binfmt_link" ]]; then
     qemu_binfmt_link_created=1
 fi
 [[ -e "$qemu_binfmt_link" ]] || die "could not provide $qemu_binfmt_link"
+# Exercise the actual runtime /lib interpreter path. The /usr QEMU prefix
+# used by mkinitramfs below can otherwise conceal a broken target /lib.
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /bin/true
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /sbin/init --version
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \

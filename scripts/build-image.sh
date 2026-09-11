@@ -89,6 +89,13 @@ mount "$boot_device" "$boot_mount"
 mount "$root_device" "$root_mount"
 
 rsync -a --exclude=/boot --exclude=/boot/ "$rootfs_dir/" "$root_mount/"
+for alias in bin sbin lib; do
+    [[ -L "$root_mount/$alias" && $(readlink "$root_mount/$alias") == "usr/$alias" ]] \
+        || die "assembled image has broken merged-usr link: $alias"
+done
+[[ -s "$root_mount/lib/ld-linux-riscv64-lp64d.so.1" ]] \
+    || die "assembled image is missing its runtime ELF interpreter"
+install -d -m 0755 "$root_mount/boot"
 install -d -m 0755 "$boot_mount/extlinux" "$boot_mount/dtbs/$kernel_release"
 install -m 0644 "$kernel_dir/arch/riscv/boot/Image" "$boot_mount/Image-$kernel_release"
 install -m 0644 "$kernel_dir/arch/riscv/boot/Image" "$boot_mount/Image"
