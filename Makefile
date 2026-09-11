@@ -8,6 +8,7 @@ BUILD_TYPE ?= release
 check:
 	bash tests/test-kernel-merge.sh
 	python3 tests/test-boot-config.py
+	python3 tests/test-release-assets.py
 	./scripts/validate-profile.sh "$(BOARD)"
 	./scripts/host-check.sh
 	./scripts/verify-source-lock.sh

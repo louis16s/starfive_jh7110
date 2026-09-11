@@ -41,7 +41,7 @@ readonly cache_dir="$REPO_ROOT/$SOURCE_ROOT/gpu"
 readonly archive="$cache_dir/img-gpu-powervr-bin-${pvr_version}.tar.gz"
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 readonly package_name=jh7110-pvr-rogue
-readonly package_version="${pvr_version}-1"
+readonly package_version="${pvr_version}-2"
 readonly output_package="$output_dir/${package_name}_${package_version}_riscv64.deb"
 mkdir -p "$cache_dir" "$output_dir"
 work_dir=$(mktemp -d "$output_dir/.gpu-package.XXXXXX")
@@ -68,11 +68,18 @@ top_dir=$(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)
 [[ -n "$top_dir" && -d "$top_dir/target" ]] \
     || die "PVR archive has no target directory"
 rsync -a "$top_dir/target/" "$stage_dir/"
+# Debian Trixie uses merged-usr. Package firmware and units under /usr/lib,
+# never ship a real top-level /lib directory over the distribution symlink.
+if [[ -d "$stage_dir/lib" ]]; then
+    rsync -a --remove-source-files "$stage_dir/lib/" "$stage_dir/usr/lib/"
+    find "$stage_dir/lib" -depth -type d -empty -delete
+    [[ ! -e "$stage_dir/lib" ]] || die "unmerged GPU payload remains"
+fi
 
 install -d -m 0755 \
     "$stage_dir/DEBIAN" \
     "$stage_dir/usr/share/doc/$package_name" \
-    "$stage_dir/lib/systemd/system" \
+    "$stage_dir/usr/lib/systemd/system" \
     "$stage_dir/etc/systemd/system/multi-user.target.wants"
 
 printf '%s\n' \
@@ -116,9 +123,9 @@ printf '%s\n' \
     '' \
     '[Install]' \
     'WantedBy=multi-user.target' \
-    > "$stage_dir/lib/systemd/system/jh7110-pvr.service"
+    > "$stage_dir/usr/lib/systemd/system/jh7110-pvr.service"
 
-ln -s /lib/systemd/system/jh7110-pvr.service \
+ln -s /usr/lib/systemd/system/jh7110-pvr.service \
     "$stage_dir/etc/systemd/system/multi-user.target.wants/jh7110-pvr.service"
 
 dpkg-deb --build --root-owner-group "$stage_dir" "$output_package" >/dev/null

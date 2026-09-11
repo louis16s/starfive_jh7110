@@ -39,6 +39,7 @@ jobs:
             while IFS= read -r -d '' file; do
               directory=$(dirname "$file")
               name=$(basename "$file")
+              case "$name" in *.img.xz|*.img.xz.sha256) continue ;; esac
               mv "$file" "$directory/jh7110-$board-$name"
             done < <(find "$root" -type f -print0)
           done
@@ -54,11 +55,11 @@ jobs:
             release/visionfive2/**/*.bin
             release/visionfive2/**/*.img
             release/visionfive2/**/*.dtb
-            release/visionfive2/**/build-manifest.txt
+            release/visionfive2/**/*build-manifest.txt
             release/mars/**/*.img.xz
             release/mars/**/*.sha256
             release/mars/**/*.deb
             release/mars/**/*.bin
             release/mars/**/*.img
             release/mars/**/*.dtb
-            release/mars/**/build-manifest.txt
+            release/mars/**/*build-manifest.txt

@@ -22,10 +22,8 @@ done
 readonly rootfs_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/rootfs/rootfs"
 readonly kernel_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/kernel"
 readonly package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
-readonly kernel_source="$REPO_ROOT/$SOURCE_ROOT/$KERNEL_SOURCE"
 
 [[ -d "$rootfs_dir" ]] || die "missing rootfs: run make BOARD=$board rootfs"
-[[ -d "$kernel_source" ]] || die "missing kernel source: run make BOARD=$board fetch"
 
 shopt -s nullglob
 image_packages=("$package_dir"/linux-image-*.deb)
