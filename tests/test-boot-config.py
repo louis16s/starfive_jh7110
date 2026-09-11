@@ -49,6 +49,11 @@ class BootConfig(unittest.TestCase):
         self.assertNotIn("BusID", config)
         self.assertIn("TimeoutStartSec=30", read("scripts/build-gpu-package.sh"))
 
+    def test_runtime_probe_uses_systemd_executable(self):
+        script = read("scripts/install-kernel-into-rootfs.sh")
+        self.assertIn("/usr/lib/systemd/systemd --version", script)
+        self.assertNotIn("/sbin/init --version", script)
+
 
 if __name__ == "__main__":
     unittest.main()

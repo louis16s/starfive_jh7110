@@ -21,6 +21,9 @@ macOS Bash 3.2 的 `set -e; [[ ! -e /bin ]]; echo ...` 未中止，
   上传规则匹配重命名后的 manifest。测试实际执行两个 workflow 的重命名代码，
   检查最终上传集合无重名、manifest 存在、checksum 指向的镜像可验证。
 - 内核安装只依赖已生成的 kernel deb 和 release 文件，去掉没有使用的源码目录依赖。
+- Ubuntu 预验证 `34616581990` 确认 GPU 包安装和 `/lib` 修复通过，随后实际暴露
+  `/sbin/init --version` 参数错误。改为调用 `/usr/lib/systemd/systemd --version`，
+  保留目标 ELF 加载器实际执行检查，并增加入口回归检查。
 
 ## Ubuntu 验证门槛
 

@@ -88,7 +88,10 @@ fi
 # Exercise the actual runtime /lib interpreter path. The /usr QEMU prefix
 # used by mkinitramfs below can otherwise conceal a broken target /lib.
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /bin/true
-chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /sbin/init --version
+# The init alias dispatches compatibility/telinit options outside PID 1.
+# Check the real systemd executable instead of passing it init-only argv[0].
+[[ -L "$rootfs_dir/sbin/init" ]] || die "systemd init link is missing"
+chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /usr/lib/systemd/systemd --version
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
