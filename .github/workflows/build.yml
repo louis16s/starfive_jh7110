@@ -20,6 +20,11 @@ on:
         options:
           - release
           - debug
+      publish_release:
+        description: Publish a GitHub Release after a successful release build
+        required: true
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       board:
@@ -30,6 +35,10 @@ on:
         required: false
         default: release
         type: string
+      publish_release:
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -188,3 +197,49 @@ jobs:
             build/${{ matrix.board }}/opensbi/platform/generic/firmware/fw_dynamic.bin
             build/${{ matrix.board }}/release/*.dtb
             build/${{ matrix.board }}/build-manifest.txt
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: ${{ inputs.publish_release && inputs.build_type == 'release' && !failure() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download VisionFive 2 artifact
+        if: inputs.board == 'all' || inputs.board == 'visionfive2'
+        uses: actions/download-artifact@v7
+        with:
+          name: jh7110-desktop-visionfive2-release
+          path: release/visionfive2
+
+      - name: Download Mars artifact
+        if: inputs.board == 'all' || inputs.board == 'mars'
+        uses: actions/download-artifact@v7
+        with:
+          name: jh7110-desktop-mars-release
+          path: release/mars
+
+      - name: Publish automatic GitHub Release
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          tag_name: jh7110-build-${{ github.run_number }}
+          name: JH7110 Desktop build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            release/visionfive2/**/*.img.xz
+            release/visionfive2/**/*.sha256
+            release/visionfive2/**/*.deb
+            release/visionfive2/**/*.bin
+            release/visionfive2/**/*.img
+            release/visionfive2/**/*.dtb
+            release/visionfive2/**/build-manifest.txt
+            release/mars/**/*.img.xz
+            release/mars/**/*.sha256
+            release/mars/**/*.deb
+            release/mars/**/*.bin
+            release/mars/**/*.img
+            release/mars/**/*.dtb
+            release/mars/**/build-manifest.txt
