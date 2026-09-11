@@ -46,7 +46,7 @@ HDMI 状态/模式、Vulkan、EGL 和 OpenGL，软件渲染或探测失败返回
 `journalctl -b -k`，关注 drm/hdmi/pvr、deferred probe 和电源错误。
 HDMI 输出与 GPU 渲染是两条不同路径，软件渲染也可能显示 XFCE。
 
-镜像默认使用锁定的 root 账户。首次启动服务在 tty1 显示中文设密界面，
+镜像默认使用锁定的 root 账户。首次启动服务在 HDMI tty1 显示英文设密界面，
 密码确认后才允许 LightDM 启动；LightDM 配置为手动输入用户名，因此
 可以使用 root 登录。没有写入任何固定默认密码。串口维护时可执行
 `systemctl restart jh7110-firstboot.service` 重新进入流程。

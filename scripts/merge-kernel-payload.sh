@@ -18,9 +18,11 @@ if [[ -d "$rootfs/lib" && ! -L "$rootfs/lib" ]]; then
     done < <(find "$rootfs/lib" -mindepth 1 -maxdepth 1 -print)
     mkdir -p "$rootfs/usr/lib/modules"
     if [[ -d "$rootfs/lib/modules" ]]; then
-        rsync -a "$rootfs/lib/modules/" "$rootfs/usr/lib/modules/"
+        rsync -a --remove-source-files "$rootfs/lib/modules/" "$rootfs/usr/lib/modules/"
+        find "$rootfs/lib/modules" -depth -type d -empty -delete
     fi
-    rmdir "$rootfs/lib/modules"
+    [[ ! -e "$rootfs/lib/modules" ]] \
+        || { echo "could not move all files from unmerged /lib/modules" >&2; exit 1; }
     rmdir "$rootfs/lib"
     ln -s usr/lib "$rootfs/lib"
 elif [[ ! -L "$rootfs/lib" || $(readlink "$rootfs/lib") != "usr/lib" ]]; then

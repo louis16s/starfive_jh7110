@@ -55,7 +55,7 @@ make BOARD=visionfive2 rootfs
 make BOARD=mars rootfs
 ```
 
-The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `root` account, installs the selected board's licensed `jh7110-pvr-rogue` package when it has been built, and installs `jh7110-firstboot.service`. On local first boot, a Chinese `whiptail` screen asks for and confirms a root password before LightDM starts. The service then sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
+The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `root` account, installs the selected board's licensed `jh7110-pvr-rogue` package when it has been built, and installs `jh7110-firstboot.service`. On local first boot, an English `whiptail` screen asks for and confirms a root password on the HDMI text console before LightDM starts; the desktop remains localized separately. The service then sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
 
 The default timezone is `Asia/Shanghai` (UTC+8). Both `zh_CN.UTF-8` and
 `en_US.UTF-8` are generated; the default locale is `zh_CN.UTF-8` with the

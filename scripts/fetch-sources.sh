@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly REPO_ROOT
 readonly LOCK_FILE="$REPO_ROOT/sources.lock"
 readonly SOURCE_ROOT="$REPO_ROOT/sources"
 

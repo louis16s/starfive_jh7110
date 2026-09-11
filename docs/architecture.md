@@ -189,7 +189,7 @@ Initial image layout is GPT with a board-independent partition contract:
 | p1 | 512 MiB | FAT32 | U-Boot-visible boot files, DTBs, kernels, initrds |
 | p2 | remaining image | ext4 | Debian rootfs |
 
-The image file is intentionally not sized to 8GB RAM. It has a minimum build size and supports larger target media. `systemd-growfs`/`growpart` is run once by `jh7110-firstboot.service`; the service records completion and disables itself. Bootloader SPI contents are separate board artifacts and are not blindly embedded into a generic disk image.
+The image file is intentionally not sized to 8GB RAM. It has a minimum build size and supports larger target media. `growpart` and `resize2fs` run once by `jh7110-firstboot.service`; the service records completion and disables itself. Bootloader SPI contents are separate board artifacts and are not blindly embedded into a generic disk image.
 
 ## Services and first boot
 

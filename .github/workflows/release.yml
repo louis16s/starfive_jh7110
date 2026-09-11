@@ -31,6 +31,18 @@ jobs:
           name: jh7110-desktop-mars-release
           path: release/mars
 
+      - name: Prefix release assets by board
+        run: |
+          set -Eeuo pipefail
+          for board in visionfive2 mars; do
+            root="release/$board"
+            while IFS= read -r -d '' file; do
+              directory=$(dirname "$file")
+              name=$(basename "$file")
+              mv "$file" "$directory/jh7110-$board-$name"
+            done < <(find "$root" -type f -print0)
+          done
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:

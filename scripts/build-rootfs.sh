@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly REPO_ROOT
 
 die() {
     echo "build-rootfs: $*" >&2
@@ -26,7 +27,6 @@ readonly package_dir="$REPO_ROOT/rootfs/packages"
 readonly overlay_dir="$REPO_ROOT/rootfs/overlay"
 readonly board_package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 readonly snapshot="$DEBIAN_SNAPSHOT"
-readonly security_snapshot="$DEBIAN_SECURITY_SNAPSHOT"
 readonly debian_keyring=/usr/share/keyrings/debian-archive-keyring.gpg
 mmdebstrap_mode=unshare
 if [[ "$EUID" -eq 0 ]]; then
