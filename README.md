@@ -26,7 +26,7 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 ## 默认账户与开机密码
 
 镜像不会写入固定的通用密码。构建时 root 账户保持 locked 状态，首次
-启动会在本地 tty1 自动显示中文设密界面：输入两次不少于 8 位的密码，
+启动会在 HDMI 本地 tty1 显示英文设密界面（Linux 文本控制台不能使用桌面的中文字体）：输入两次不少于 8 位的密码，
 确认后才启动 LightDM。密码只写入目标设备，不会进入 GitHub Actions、
 日志或镜像文件。
 
@@ -39,7 +39,9 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 ~~~
 
 首次启动设密服务完成后，LightDM 允许手动输入用户名，使用 root 登录。
-如果只接串口而看不到 tty1，可在 root shell 中执行：
+桌面仍默认中文、Asia/Shanghai（UTC+8）。首次初始化最多等待 5 分钟；超时后不会继续阻塞 LightDM，但未设密的 root 仍锁定，不能登录。应连接 HDMI 和 USB 键盘重新启动设备完成设密。
+
+如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设密界面（它不会转移到串口）：
 
 ~~~sh
 systemctl restart jh7110-firstboot.service
@@ -168,7 +170,7 @@ unzip -p jh7110-desktop-mars-release.zip image/jh7110-desktop-mars-8g.img.xz \
 sync
 ~~~
 
-镜像包含 GPT、FAT32 /boot 和 ext4 rootfs 分区。镜像不固定为 64GB；首次启动时 jh7110-firstboot.service 使用 growpart 和 systemd-growfs 将第 2 分区及 rootfs 扩展到目标 TF 卡的最大可用空间。完成后可检查：
+镜像包含 GPT、FAT32 /boot 和 ext4 rootfs 分区。镜像不固定为 64GB；首次启动时 jh7110-firstboot.service 使用 growpart 和 resize2fs 将根分区及 ext4 文件系统扩展到目标 TF 卡的最大可用空间。完成后可检查：
 
 ~~~sh
 lsblk
@@ -253,7 +255,7 @@ llvmpipe、softpipe 或 lavapipe 时会失败，避免把软件渲染报告为�
 
 ## 已知限制
 
-1. root 密码必须在首次启动 tty1 设置，串口环境可重启 jh7110-firstboot.service。
+1. root 密码必须在首次启动的 HDMI tty1 设置；串口重启服务也仍然在 HDMI 显示设密界面。启动异常见 [HDMI 启动排查](docs/boot-regression.md)。
 2. PVR 包已纳入构建，但 HDMI、Wayland、Vulkan、VPU、音频和 USB 键鼠仍需真实硬件验收。
 3. Mars 的 NVMe 默认按能力矩阵报告为 SKIP，不能套用 VisionFive 2 的 NVMe 结论。
 4. Chromium 暂未提供官方 riscv64 Trixie 安装包。

@@ -155,8 +155,17 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             LC_MESSAGES="$DEFAULT_LOCALE"
         passwd --lock root
         systemctl preset-all
-        systemctl enable NetworkManager systemd-timesyncd ssh lightdm
+        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-firstboot
         systemctl set-default graphical.target
+        # Validate target binaries and desktop payload before assembling an image.
+        for helper in chvt whiptail growpart resize2fs lsblk; do
+            command -v "$helper" >/dev/null
+        done
+        lsblk --help | grep -qw PARTN
+        test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
+        test -s /usr/share/xsessions/xfce.desktop
+        test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop
+        test -s /etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
         apt-get clean

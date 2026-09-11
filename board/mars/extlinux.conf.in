@@ -1,4 +1,4 @@
-TIMEOUT 1
+TIMEOUT 30
 DEFAULT jh7110
 
 LABEL jh7110
@@ -6,4 +6,4 @@ LABEL jh7110
     LINUX /Image
     INITRD /initrd.img
     FDT /dtbs/@KERNEL_RELEASE@/@KERNEL_DTB@
-    APPEND root=PARTUUID=@ROOT_PARTUUID@ rw rootwait console=ttyS0,115200 earlycon=sbi
+    APPEND root=PARTUUID=@ROOT_PARTUUID@ rw rootwait console=tty0 console=ttyS0,115200 earlycon=sbi fbcon=nodefer

@@ -7,6 +7,8 @@ ConditionPathExists=!/var/lib/jh7110/firstboot.done
 
 [Service]
 Type=oneshot
+Environment=TERM=linux
+TimeoutStartSec=300
 ExecStart=/usr/libexec/jh7110-firstboot
 StandardInput=tty
 StandardOutput=tty

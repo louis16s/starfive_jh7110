@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly REPO_ROOT
 
 die() {
     echo "build-gpu-package: $*" >&2
@@ -43,7 +44,8 @@ readonly package_name=jh7110-pvr-rogue
 readonly package_version="${pvr_version}-1"
 readonly output_package="$output_dir/${package_name}_${package_version}_riscv64.deb"
 mkdir -p "$cache_dir" "$output_dir"
-readonly work_dir=$(mktemp -d "$output_dir/.gpu-package.XXXXXX")
+work_dir=$(mktemp -d "$output_dir/.gpu-package.XXXXXX")
+readonly work_dir
 readonly stage_dir="$work_dir/package"
 readonly payload_dir="$work_dir/payload"
 
@@ -107,6 +109,7 @@ printf '%s\n' \
     '' \
     '[Service]' \
     'Type=oneshot' \
+    'TimeoutStartSec=30' \
     'ExecStart=/etc/init.d/rc.pvr start' \
     'ExecStop=/etc/init.d/rc.pvr stop' \
     'RemainAfterExit=yes' \

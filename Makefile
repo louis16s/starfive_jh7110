@@ -6,6 +6,7 @@ BUILD_TYPE ?= release
 .PHONY: check profile verify-sources host-check fetch kernel uboot opensbi gpu-package rootfs install-kernel image compress manifest
 
 check:
+	python3 tests/test-boot-config.py
 	./scripts/validate-profile.sh "$(BOARD)"
 	./scripts/host-check.sh
 	./scripts/verify-source-lock.sh

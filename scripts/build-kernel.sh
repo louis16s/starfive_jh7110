@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+readonly REPO_ROOT
 
 die() {
     echo "build-kernel: $*" >&2
@@ -36,9 +37,12 @@ kernel_make() {
 }
 
 kernel_make "$KERNEL_DEFCONFIG"
+for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV; do
+    "$kernel_source/scripts/config" --file "$output_dir/.config" --enable "$symbol"
+done
 kernel_make olddefconfig
 # Fail before the expensive build if the locked BSP loses graphics support.
-for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE; do
+for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID; do
     grep -qx "CONFIG_${symbol}=y" "$output_dir/.config" \
         || die "required BSP option missing: CONFIG_$symbol"
 done

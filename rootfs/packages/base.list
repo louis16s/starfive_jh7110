@@ -5,6 +5,7 @@ cloud-guest-utils
 dbus
 e2fsprogs
 locales
+kbd
 network-manager
 openssh-server
 parted
