@@ -42,21 +42,19 @@ if [[ ! -f "$target_loader" ]]; then
 fi
 [[ -n "$target_loader" && -f "$target_loader" ]] \
     || die "riscv64 dynamic loader is missing from $rootfs_dir"
-install -d -m 0755 "$rootfs_dir/lib"
-if [[ ! -e "$compat_loader" ]]; then
-    [[ ! -L "$compat_loader" ]] || rm -f "$compat_loader"
-    compat_target=$(realpath --relative-to="$rootfs_dir/lib" "$target_loader")
-    ln -s "$compat_target" "$compat_loader"
-fi
-[[ -e "$compat_loader" ]] || die "could not provide $compat_loader"
 printf 'install-kernel: riscv64 loader %s -> %s\n' \
-    "$target_loader" "$(readlink -f "$compat_loader")"
+    "$target_loader" "pending merged-usr repair"
 
 printf 'install-kernel: extracting %s\n' "${image_packages[0]}"
 kernel_payload=$(mktemp -d "$package_dir/.kernel-payload.XXXXXX")
 trap 'rm -rf "$kernel_payload"' EXIT
 dpkg-deb --extract "${image_packages[0]}" "$kernel_payload"
 bash "$REPO_ROOT/scripts/merge-kernel-payload.sh" "$kernel_payload" "$rootfs_dir"
+if [[ ! -e "$compat_loader" ]]; then
+    compat_target=$(realpath --relative-to="$rootfs_dir/lib" "$target_loader")
+    ln -s "$compat_target" "$compat_loader"
+fi
+[[ -e "$compat_loader" ]] || die "could not provide $compat_loader"
 [[ -L "$rootfs_dir/lib" && -e "$compat_loader" ]] \
     || die "kernel extraction broke merged-usr or the ELF interpreter"
 printf 'install-kernel: running depmod for %s\n' "$kernel_release"
