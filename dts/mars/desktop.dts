@@ -15,7 +15,7 @@
             input-enable;
         };
         hpd-pins {
-            pinmux = <GPIOMUX(15, GPOUT_LOW, GPOEN_DISABLE, GPI_NONE)>;
+            pinmux = <GPIOMUX(15, GPOUT_LOW, GPOEN_DISABLE, GPI_SYS_HDMI_HPD)>;
             input-enable;
         };
     };
