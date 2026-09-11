@@ -18,6 +18,7 @@ bash scripts/build-gpu-package.sh mars
 # shellcheck source=/dev/null
 source configs/common.conf
 mmdebstrap --mode=root --architectures=riscv64 --variant=minbase \
+    --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
     --include=systemd-sysv --aptopt='Acquire::Check-Valid-Until "false"' \
     --aptopt='Acquire::Retries "3"' trixie "$audit/minimal" "$DEBIAN_SNAPSHOT"
 ls -ld "$audit/minimal/lib" "$audit/minimal/bin" "$audit/minimal/sbin"

@@ -12,7 +12,7 @@ jobs:
       - name: Install verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y mmdebstrap qemu-user-static binfmt-support rsync python3-yaml dosfstools gdisk initramfs-tools device-tree-compiler
+          sudo apt-get install -y mmdebstrap debian-archive-keyring qemu-user-static binfmt-support rsync python3-yaml dosfstools gdisk initramfs-tools device-tree-compiler
           sudo update-binfmts --enable
       - name: Test filesystem merging and release checksums
         run: |
