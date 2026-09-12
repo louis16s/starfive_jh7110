@@ -91,7 +91,7 @@ HDMI 显示走 DRM/KMS，不依赖它。
 | 停在 U-Boot / 显示标志不动 | 串口日志；本仓库不管启动链，见 [boot-regression.md](boot-regression.md) |
 | 有 LightDM 背景但没有登录界面，也没有向导 | `journalctl -b -u lightdm`，`cat /var/log/jh7110-oobe.log` |
 | 向导窗口出现但某一步失败 | 该页会显示失败步骤；`journalctl -b -u jh7110-oobe-backend` |
-| 登录界面有账户但登录后黑屏 | `journalctl -b -u lightdm`，`~/.local/share/xsessions/` 日志 |
+| 登录界面有账户但登录后黑屏 | `journalctl -b -u lightdm`，`~/.xsession-errors`，`/var/log/lightdm/x-0.log` |
 | 没有可见屏幕（只有串口） | 在串口上 `sudo jh7110-console-setup` |
 
 在任何一种情况下，能进系统就有：
