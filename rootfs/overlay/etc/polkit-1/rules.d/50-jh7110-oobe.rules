@@ -1,0 +1,43 @@
+/* What the first-run wizard and its greeter are allowed to do.
+ *
+ * Both run as the greeter account, which has no privilege of its own: the
+ * settings that need root go through the jh7110-oobe-backend socket, whose
+ * method table is fixed.  The two things that cannot go that way are here, and
+ * they are deliberately narrow:
+ *
+ *   - connecting to a network, which NetworkManager itself authorises and
+ *     which the wizard's network page cannot do without;
+ *   - starting the console recovery setup, which is how a board whose desktop
+ *     cannot start still gets an account.
+ *
+ * Nothing else is granted to this account, and rule files that sort after this
+ * one can still take these away.
+ */
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "lightdm") {
+        return null;
+    }
+
+    // Scanning for networks, joining one, and storing the connection profile
+    // are three separate permissions; the wizard needs all three and no more.
+    // Reading the list of devices and connections needs no permission at all.
+    var networkActions = [
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.settings.modify.system"
+    ];
+    if (networkActions.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+
+    // One unit, and only to start it.  The unit itself refuses to run once the
+    // board has been set up and never appears in the boot path.
+    if (action.id === "org.freedesktop.systemd1.manage-units") {
+        if (action.lookup("unit") === "jh7110-console-setup.service" &&
+            action.lookup("verb") === "start") {
+            return polkit.Result.YES;
+        }
+    }
+
+    return null;
+});
