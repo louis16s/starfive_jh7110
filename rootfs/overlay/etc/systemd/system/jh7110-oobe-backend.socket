@@ -1,0 +1,17 @@
+[Unit]
+Description=jh7110 first-run setup backend socket
+Documentation=man:jh7110-oobe-backend(8)
+
+[Socket]
+ListenStream=/run/jh7110/oobe.sock
+# The socket belongs to root and is group-readable by the greeter account,
+# which is the only user the wizard ever runs as.  The backend checks the peer
+# of every connection on top of this, so the mode is the second line of the
+# same defence and not the only one.
+SocketMode=0660
+SocketUser=root
+SocketGroup=lightdm
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

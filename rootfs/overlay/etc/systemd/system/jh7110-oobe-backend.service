@@ -1,0 +1,35 @@
+[Unit]
+Description=jh7110 first-run setup backend
+Documentation=https://github.com/louis16s/starfive_jh7110
+# Socket activation: the backend is started by the first connection and is not
+# a dependency of anything that boots.  A board that never runs the wizard
+# never runs this either, and the first boot cannot be held up by it.
+Requires=jh7110-oobe-backend.socket
+After=jh7110-prepare.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/jh7110-oobe-backend
+# Every method either writes a file or runs one of this project's own tools,
+# and none of them reads from the terminal: a wizard that needs an answer
+# cannot end up waiting on stdin of the backend instead.
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+KillMode=mixed
+TimeoutStopSec=15
+# The hardening that cannot get in the way of what this has to do: create an
+# account (a home directory under /home), write /etc, and set the hostname.
+# ProtectSystem and ProtectHome are deliberately not used - they would refuse
+# the two things the backend exists for.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+
+# No [Install] section on purpose.  The socket is what is enabled, and this
+# unit is started by connecting to it; a unit that could also be enabled into
+# the boot would be a root daemon running on boards that never open the wizard,
+# which is the opposite of what socket activation is here for.  `systemctl
+# enable` on this unit therefore fails, and that failure is the intended one.
+

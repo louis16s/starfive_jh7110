@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Write the board's name everywhere it has to agree: /etc/hostname, the running
+# kernel and the resolver, in that order.
+#
+# The logic is the library's (see usr/lib/jh7110/common.sh) and the shell tools
+# source it directly; this exists for the callers that are not shell - the
+# graphical setup talks to a Python backend - so that the name a board ends up
+# with does not depend on which path set it.
+#
+#     jh7110-set-hostname jh7110-mars
+#
+# Exit status: 0 written, 1 the name is not acceptable, 2 the write failed,
+# 3 the files were written but the name still does not resolve.  The reason is
+# printed either way, and it is the text the wizard shows.
+set -Eeuo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "usage: jh7110-set-hostname NAME" >&2
+    exit 1
+fi
+
+if [[ $(id -u) -ne 0 ]]; then
+    echo "jh7110-set-hostname must run as root" >&2
+    exit 2
+fi
+
+# shellcheck source=/dev/null
+source /usr/lib/jh7110/common.sh
+
+# Nothing here may exit on a non-zero status: jh7110_set_system_hostname
+# returns the reason as a status, and the status is what this hands back.
+set +e
+jh7110_set_system_hostname "$1"
+status=$?
+set -e
+
+case $status in
+    0) ;;
+    1) echo "that is not a usable device name" >&2 ;;
+    2) echo "the device name could not be written" >&2 ;;
+    3) echo "the device name was written but does not resolve yet" >&2 ;;
+    *) echo "unexpected hostname status: $status" >&2 ;;
+esac
+exit "$status"

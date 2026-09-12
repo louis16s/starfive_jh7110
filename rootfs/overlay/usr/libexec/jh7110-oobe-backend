@@ -1,0 +1,766 @@
+#!/usr/bin/python3
+"""The privileged half of the first-run setup.
+
+The wizard runs as the greeter user, which owns nothing and may change nothing.
+Everything the first run has to do that needs root - writing the device name
+and its hosts entry, creating the account, the timezone, the locale, the SSH
+policy - happens here instead.
+
+It listens on a unix socket and answers a fixed set of methods.  There is no
+method that runs a command and no method that takes one: a request names a
+method from the table below and passes values, and the values are validated
+against what the method expects.  Whoever can reach the socket can therefore
+choose between the methods, and cannot do anything else - which is the reason
+this exists as a separate process rather than as a setuid wizard.
+
+The peer of every connection is checked against SO_PEERCRED before a single
+byte is read: root, or the greeter user, and nobody else.  The socket itself is
+created by jh7110-oobe-backend.socket with the mode and the group that
+systemd was told to give it, and the credential check is what keeps a second
+account out even if that should ever be wrong.
+
+    systemd socket activation    # the shipped path: the socket owns the
+                                 # lifetime, the backend starts on first use
+    jh7110-oobe-backend          # standalone, for a debug session or a test
+
+Passwords arrive over the socket, are handed to jh7110-account on standard
+input, and are never written to a file, a log line or a command line - the same
+rule the rest of this project follows.  Python cannot wipe a string, so the
+value is simply dropped as early as possible.
+"""
+import errno
+import fcntl
+import json
+import os
+import pwd
+import re
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+VERSION = 1
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+#
+# Everything the backend touches is derived from one prefix, so a test can run
+# the real code against a sandbox tree.  JH7110_ROOT is that hook: the board
+# never sets it, and the shipped unit never sets it either.  It is the same
+# idea as JH7110_ETC in usr/lib/jh7110/common.sh.
+ROOT = os.environ.get("JH7110_ROOT", "").rstrip("/")
+TEST_MODE = bool(ROOT)
+
+
+def rooted(path):
+    return ROOT + path
+
+
+STATE_DIR = rooted("/var/lib/jh7110")
+RUN_DIR = rooted("/run/jh7110")
+STATE_FILE = os.path.join(STATE_DIR, "oobe-state.json")
+DONE_FILE = os.path.join(STATE_DIR, "oobe.done")
+HARDWARE_FILE = os.path.join(STATE_DIR, "hardware.json")
+BOARD_CONF = rooted("/etc/jh7110/board.conf")
+TIMEZONE_FILE = rooted("/etc/timezone")
+LOCALTIME_LINK = rooted("/etc/localtime")
+LOCALE_FILE = rooted("/etc/default/locale")
+KEYBOARD_FILE = rooted("/etc/default/keyboard")
+SSHD_CONFIG = rooted("/etc/ssh/sshd_config.d/90-jh7110.conf")
+ZONEINFO_DIR = rooted("/usr/share/zoneinfo")
+XKB_SYMBOLS_DIR = rooted("/usr/share/X11/xkb/symbols")
+TOOLS_DIR = rooted("/usr/libexec")
+SOCKET_PATH = os.environ.get("JH7110_OOBE_SOCKET") or os.path.join(RUN_DIR, "oobe.sock")
+
+ACCOUNT_TOOL = os.path.join(TOOLS_DIR, "jh7110-account")
+HOSTNAME_TOOL = os.path.join(TOOLS_DIR, "jh7110-set-hostname")
+SSHD = rooted("/usr/sbin/sshd")
+SYSTEMCTL = rooted("/usr/bin/systemctl")
+SETUPCON = rooted("/usr/bin/setupcon")
+
+# The state file is the record of what the first run has already done, so that
+# a board which loses power halfway through does not create a second account or
+# a second hosts entry when it comes back.  It holds no secret of any kind.
+STATE_VERSION = 1
+STATE_DEFAULTS = {
+    "version": STATE_VERSION,
+    "language": "",
+    "hostname": "",
+    "username": "",
+    "user_created": False,
+    "timezone": "",
+    "locale": "",
+    "keymap": "",
+    "network_configured": False,
+    "ssh_enabled": True,
+    "finalized": False,
+}
+
+# A password the wizard accepts has to survive the trip through chpasswd
+# unmangled, so a newline can never be part of it, and eight characters is the
+# floor the rest of the project uses.
+MIN_PASSWORD_LENGTH = 8
+MAX_VALUE_LENGTH = 256
+MAX_HARDWARE_REPORT = 64 * 1024
+
+
+class SetupError(Exception):
+    """A refusal that is shown to the user as it is."""
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+def log(message):
+    sys.stderr.write("jh7110-oobe-backend: %s\n" % message)
+    sys.stderr.flush()
+
+
+def write_atomic(path, data, mode=0o644):
+    """Write a file through a temporary in the same directory.
+
+    A board that loses power while the first run is writing must come back with
+    either the old file or the new one: half a hosts file or half a state file
+    is a machine that boots into something nobody designed.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    handle, tmp = tempfile.mkstemp(dir=directory, prefix=".jh7110-oobe.")
+    try:
+        with os.fdopen(handle, "w") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        # Not every filesystem lets a directory be synced, and failing the
+        # write over that would be worse than the window it closes.
+        pass
+
+
+def run(argv, stdin_text=None):
+    """Run one of the project's own tools.
+
+    Every caller passes a list built here from a fixed program and validated
+    values, which is what keeps this from being the arbitrary-command interface
+    it must never be.
+    """
+    return subprocess.run(
+        argv,
+        input=stdin_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def failure_message(result, fallback):
+    text = (result.stderr or "").strip().splitlines()
+    if text:
+        # The tools print their reason on the last line, with their own name in
+        # front of it; the wizard shows what is left.
+        return text[-1].split(": ", 1)[-1].strip() or fallback
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# Values that come from the wizard
+# ---------------------------------------------------------------------------
+def require_text(params, key, label, max_length=MAX_VALUE_LENGTH):
+    value = params.get(key)
+    if not isinstance(value, str):
+        raise SetupError("the %s is missing" % label)
+    value = value.strip()
+    if not value:
+        raise SetupError("the %s is empty" % label)
+    if len(value) > max_length:
+        raise SetupError("the %s is too long" % label)
+    if any(character in value for character in ("\n", "\r", "\0")):
+        raise SetupError("the %s contains a control character" % label)
+    return value
+
+
+def require_password(params, key="password"):
+    password = params.get(key)
+    if not isinstance(password, str) or not password:
+        raise SetupError("the password is empty")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise SetupError(
+            "the password needs at least %d characters" % MIN_PASSWORD_LENGTH
+        )
+    if any(character in password for character in ("\n", "\r", "\0")):
+        raise SetupError("the password contains a control character")
+    return password
+
+
+def require_username(params):
+    return require_text(params, "username", "user name", max_length=32)
+
+
+def valid_username(name):
+    """The same shape jh7110-account accepts, checked before it is called.
+
+    This is the cheap half of the rule - it saves a process and gives the
+    wizard an answer while the user is still typing.  jh7110-account is the
+    authority, and it is the one that decides.
+    """
+    return bool(re.match(r"^[a-z_][a-z0-9_-]*$", name)) and name != "root"
+
+
+def valid_timezone(name):
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_+-]*(/[A-Za-z0-9][A-Za-z0-9_+-]*)*$", name):
+        return False
+    candidate = os.path.realpath(os.path.join(ZONEINFO_DIR, name))
+    base = os.path.realpath(ZONEINFO_DIR)
+    return candidate.startswith(base + os.sep) and os.path.isfile(candidate)
+
+
+# ---------------------------------------------------------------------------
+# The board's own configuration
+# ---------------------------------------------------------------------------
+def read_board_conf():
+    """The KEY=value file the build wrote; never executed, only parsed."""
+    settings = {}
+    try:
+        with open(BOARD_CONF, "r") as stream:
+            for line in stream:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                settings[key.strip()] = value.strip().strip("'\"")
+    except OSError:
+        settings = {}
+    return settings
+
+
+def board_public_settings(settings):
+    return {
+        "board_id": settings.get("BOARD_ID", ""),
+        "board_name": settings.get("BOARD_NAME", ""),
+        "default_hostname": settings.get("DEFAULT_HOSTNAME", "")
+        or "jh7110-%s" % settings.get("BOARD_ID", ""),
+        "default_user": settings.get("DEFAULT_USER", "jh7110"),
+        "timezone": settings.get("TIMEZONE", "UTC"),
+        "locale": settings.get("DEFAULT_LOCALE", "en_US.UTF-8"),
+        "language": settings.get("DEFAULT_LANGUAGE", ""),
+        "supported_locales": settings.get("SUPPORTED_LOCALES", "").split(),
+        "account_model": settings.get("ACCOUNT_MODEL", "admin-user"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The state file
+# ---------------------------------------------------------------------------
+class State:
+    """Read, change and write oobe-state.json under a lock.
+
+    Two writers is the one way this file could disagree with the machine - the
+    wizard retrying after a failure while the console setup repairs the same
+    board - so every read-modify-write happens with the lock held, and the file
+    is replaced atomically rather than edited in place.
+    """
+
+    def __init__(self, path=STATE_FILE):
+        self.path = path
+        self.lock_path = path + ".lock"
+        self.handle = None
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        self.handle = open(self.lock_path, "a+")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc_info):
+        if self.handle is not None:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+            self.handle = None
+        return False
+
+    def load(self):
+        state = dict(STATE_DEFAULTS)
+        try:
+            with open(self.path, "r") as stream:
+                loaded = json.load(stream)
+        except OSError:
+            return state
+        except ValueError:
+            # A corrupt state file is reported rather than silently replaced:
+            # it means something went wrong, and the defaults below are what
+            # the first run would do anyway.
+            log("the state file is not valid JSON; starting from the defaults")
+            return state
+        if not isinstance(loaded, dict):
+            return state
+        for key in STATE_DEFAULTS:
+            if key in loaded:
+                state[key] = loaded[key]
+        state["version"] = STATE_VERSION
+        return state
+
+    def save(self, state):
+        write_atomic(self.path, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# The methods
+# ---------------------------------------------------------------------------
+METHODS = {}
+
+# The methods that change the machine.  Once the setup is finished, the wizard
+# is no longer the thing that may change it - otherwise the socket would stay a
+# way to rewrite the device name or add an account for as long as the board
+# exists.  Running the setup again is a deliberate act by root
+# (`jh7110-oobe --reset`), which clears the state this checks.
+MUTATING_METHODS = frozenset(
+    (
+        "SetHostname",
+        "CreateUser",
+        "SetUserPassword",
+        "SetTimezone",
+        "SetLocale",
+        "SetKeymap",
+        "ConfigureSSH",
+        "SaveHardware",
+        "FinalizeSetup",
+    )
+)
+
+
+def method(name):
+    def register(function):
+        METHODS[name] = function
+        return function
+
+    return register
+
+
+class Backend:
+    def __init__(self):
+        self.board = board_public_settings(read_board_conf())
+
+    # -- reading ----------------------------------------------------------
+    @method("Ping")
+    def ping(self, params):
+        return {"version": VERSION, "pid": os.getpid()}
+
+    @method("GetBoard")
+    def get_board(self, params):
+        return self.board
+
+    @method("GetState")
+    def get_state(self, params):
+        with State() as state:
+            return state.load()
+
+    # -- the device name --------------------------------------------------
+    @method("SetHostname")
+    def set_hostname(self, params):
+        hostname = require_text(params, "hostname", "device name", max_length=63)
+        result = run([HOSTNAME_TOOL, hostname])
+        if result.returncode not in (0, 3):
+            raise SetupError(
+                failure_message(result, "the device name could not be set")
+            )
+        warning = ""
+        if result.returncode == 3:
+            # The files are written and the kernel knows the name; the resolver
+            # has not caught up.  It is worth telling the user, and it is not a
+            # reason to refuse a name the rest of the system already answers to.
+            warning = "the device name does not resolve yet; it will after a reboot"
+        with State() as state:
+            current = state.load()
+            current["hostname"] = hostname
+            state.save(current)
+        return {"hostname": hostname, "warning": warning}
+
+    # -- the account ------------------------------------------------------
+    @method("CreateUser")
+    def create_user(self, params):
+        username = require_username(params)
+        if not valid_username(username):
+            raise SetupError("that user name cannot be used")
+        password = require_password(params)
+        try:
+            self._account_create(username, password)
+        finally:
+            del password
+        with State() as state:
+            current = state.load()
+            current["username"] = username
+            current["user_created"] = True
+            state.save(current)
+        return {"username": username}
+
+    @method("SetUserPassword")
+    def set_user_password(self, params):
+        username = require_username(params)
+        with State() as state:
+            current = state.load()
+        if not current["user_created"] or current["username"] != username:
+            raise SetupError("there is no account to change the password of")
+        password = require_password(params)
+        try:
+            self._account_create(username, password)
+        finally:
+            del password
+        return {"username": username}
+
+    def _account_create(self, username, password):
+        """Create or repair the account through the one tool that does it.
+
+        The password goes in on standard input: an argument would be visible in
+        ps to every process on the board, and this one is a person's password.
+        """
+        try:
+            result = run([ACCOUNT_TOOL, "create", username], stdin_text=password + "\n")
+        except OSError as error:
+            raise SetupError("the account tool could not be run: %s" % error.strerror)
+        if result.returncode != 0:
+            raise SetupError(failure_message(result, "the account could not be created"))
+
+    # -- the machine's settings -------------------------------------------
+    @method("SetTimezone")
+    def set_timezone(self, params):
+        timezone = require_text(params, "timezone", "timezone", max_length=64)
+        if not valid_timezone(timezone):
+            raise SetupError("%s is not a timezone this system knows" % timezone)
+        write_atomic(TIMEZONE_FILE, timezone + "\n")
+        # The symlink is replaced rather than removed and recreated, so there is
+        # no moment where /etc/localtime points at nothing.
+        os.makedirs(os.path.dirname(LOCALTIME_LINK), exist_ok=True)
+        temporary = LOCALTIME_LINK + ".jh7110-new"
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+        os.symlink(os.path.join("/usr/share/zoneinfo", timezone), temporary)
+        os.replace(temporary, LOCALTIME_LINK)
+        with State() as state:
+            current = state.load()
+            current["timezone"] = timezone
+            state.save(current)
+        return {"timezone": timezone}
+
+    @method("SetLocale")
+    def set_locale(self, params):
+        locale = require_text(params, "locale", "language", max_length=64)
+        supported = self.board.get("supported_locales") or []
+        if supported and locale not in supported:
+            raise SetupError("%s is not one of the languages this image carries" % locale)
+        language = params.get("language") or ""
+        if not isinstance(language, str):
+            raise SetupError("the language is not a string")
+        language = language.strip()
+        if any(character in language for character in ("\n", "\r", "\0")):
+            raise SetupError("the language contains a control character")
+        if len(language) > MAX_VALUE_LENGTH:
+            raise SetupError("the language is too long")
+        # The wizard asks for one language; LANGUAGE is the list the desktop
+        # falls back through, and the chosen locale is the one it should use.
+        if not language:
+            language = locale.split(".")[0]
+        write_atomic(
+            LOCALE_FILE,
+            'LANG="%s"\nLANGUAGE="%s"\nLC_MESSAGES="%s"\n' % (locale, language, locale),
+        )
+        with State() as state:
+            current = state.load()
+            current["locale"] = locale
+            state.save(current)
+        return {"locale": locale, "language": language}
+
+    @method("SetKeymap")
+    def set_keymap(self, params):
+        keymap = require_text(params, "keymap", "keyboard layout", max_length=64)
+        if not re.match(r"^[a-z0-9_-]+$", keymap):
+            raise SetupError("that keyboard layout cannot be used")
+        if not os.path.exists(os.path.join(XKB_SYMBOLS_DIR, keymap)):
+            raise SetupError("%s is not a keyboard layout this system knows" % keymap)
+        write_atomic(
+            KEYBOARD_FILE,
+            "# Written by the first-run setup.\n"
+            'XKBMODEL="pc105"\n'
+            'XKBLAYOUT="%s"\n'
+            'XKBVARIANT=""\n'
+            'XKBOPTIONS=""\n'
+            "BACKSPACE=\"guess\"\n" % keymap,
+        )
+        # The console keymap follows the desktop one; failing to apply it now is
+        # not a reason to refuse the choice, because the next boot applies it.
+        if os.path.exists(SETUPCON):
+            run([SETUPCON])
+        with State() as state:
+            current = state.load()
+            current["keymap"] = keymap
+            state.save(current)
+        return {"keymap": keymap}
+
+    # -- ssh ----------------------------------------------------------------
+    @method("ConfigureSSH")
+    def configure_ssh(self, params):
+        enabled = params.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise SetupError("the ssh setting is not a boolean")
+        permit_root = params.get("permit_root_login", False)
+        if permit_root:
+            # The wizard has no way to turn this on, and saying so is better
+            # than quietly writing something else.
+            raise SetupError("root login over ssh is not something this setup enables")
+        previous = None
+        try:
+            with open(SSHD_CONFIG, "r") as stream:
+                previous = stream.read()
+        except OSError:
+            previous = None
+        write_atomic(
+            SSHD_CONFIG,
+            "# Written by the first-run setup.  Root never logs in over the\n"
+            "# network: the desktop account uses sudo, and an unlocked root\n"
+            "# account reachable over ssh is the shortest path from a leaked\n"
+            "# password to a lost board.\n"
+            "PermitRootLogin no\n",
+        )
+        if os.path.exists(SSHD):
+            result = run([SSHD, "-t"])
+            if result.returncode != 0:
+                # An sshd that will not start is a board that cannot be reached
+                # from the network at all, so the file goes back to what it was.
+                if previous is None:
+                    try:
+                        os.unlink(SSHD_CONFIG)
+                    except OSError:
+                        pass
+                else:
+                    write_atomic(SSHD_CONFIG, previous)
+                raise SetupError(
+                    failure_message(result, "the ssh configuration was refused")
+                )
+        else:
+            log("sshd is not installed; the ssh configuration was not validated")
+        if not enabled and os.path.exists(SYSTEMCTL):
+            run([SYSTEMCTL, "disable", "--now", "ssh.service"])
+        with State() as state:
+            current = state.load()
+            current["ssh_enabled"] = enabled
+            state.save(current)
+        return {"ssh_enabled": enabled}
+
+    # -- what the board turned out to be ----------------------------------
+    @method("SaveHardware")
+    def save_hardware(self, params):
+        report = params.get("report")
+        if not isinstance(report, dict):
+            raise SetupError("the hardware report is not an object")
+        encoded = json.dumps(report, ensure_ascii=False, indent=2)
+        if len(encoded) > MAX_HARDWARE_REPORT:
+            raise SetupError("the hardware report is too large")
+        write_atomic(HARDWARE_FILE, encoded + "\n")
+        return {"saved": True}
+
+    # -- the end ----------------------------------------------------------
+    @method("FinalizeSetup")
+    def finalize_setup(self, params):
+        with State() as state:
+            current = state.load()
+            if not current["user_created"]:
+                raise SetupError("the account has to exist before the setup can finish")
+            if not current["hostname"]:
+                raise SetupError("the device name has to be set before the setup can finish")
+            if params.get("network_configured"):
+                current["network_configured"] = True
+            current["finalized"] = True
+            state.save(current)
+            # The done file is what stops the next boot from running this again
+            # and what the greeter wrapper looks for.  It is written last, and
+            # it holds nothing but what it says.
+            write_atomic(
+                DONE_FILE,
+                "finalized=%s hostname=%s user=%s\n"
+                % (
+                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    current["hostname"],
+                    current["username"],
+                ),
+            )
+        return {"finalized": True, "state": current}
+
+    # -- dispatch ---------------------------------------------------------
+    def handle(self, request):
+        if not isinstance(request, dict):
+            return {"ok": False, "error": "the request is not an object"}
+        name = request.get("method")
+        params = request.get("params") or {}
+        if not isinstance(name, str) or name not in METHODS:
+            return {"ok": False, "error": "unknown method"}
+        if not isinstance(params, dict):
+            return {"ok": False, "error": "the parameters are not an object"}
+        if name in MUTATING_METHODS:
+            with State() as state:
+                if state.load()["finalized"]:
+                    return {
+                        "ok": False,
+                        "error": "the setup is already finished; "
+                        "run jh7110-oobe --reset to run it again",
+                    }
+        try:
+            result = METHODS[name](self, params)
+        except SetupError as error:
+            return {"ok": False, "error": str(error)}
+        except Exception as error:  # noqa: BLE001 - a crash must not take the socket down
+            # A bug in one method is answered, not fatal: the wizard shows it
+            # and the user can go back, and the backend stays up for the retry.
+            log("method %s failed: %s" % (name, error))
+            return {"ok": False, "error": "the setup could not complete that step"}
+        return {"ok": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# The socket
+# ---------------------------------------------------------------------------
+def allowed_uids():
+    """Who may talk to the backend.
+
+    Root, because the console setup and a hand-run wizard are root, and the
+    greeter user, because that is who runs the wizard during the first boot.
+    The test hook adds nobody on a board: it is only read when JH7110_ROOT is
+    set, and the shipped unit never sets it.
+    """
+    uids = {0}
+    try:
+        uids.add(pwd.getpwnam("lightdm").pw_uid)
+    except KeyError:
+        pass
+    if TEST_MODE:
+        for value in os.environ.get("JH7110_ALLOWED_UIDS", "").split(","):
+            value = value.strip()
+            if value.isdigit():
+                uids.add(int(value))
+    return uids
+
+
+def peer_uid(connection):
+    """The uid on the other end, from the kernel rather than from the client."""
+    if not hasattr(socket, "SO_PEERCRED"):
+        return None
+    credentials = connection.getsockopt(
+        socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+    )
+    _pid, uid, _gid = struct.unpack("3i", credentials)
+    return uid
+
+
+def serve_connection(connection, backend, allowed):
+    try:
+        connection.settimeout(30)
+        uid = peer_uid(connection)
+        if uid is not None and uid not in allowed:
+            log("refused a connection from uid %d" % uid)
+            return
+        data = b""
+        while b"\n" not in data and len(data) < 1024 * 1024:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        line = data.split(b"\n", 1)[0]
+        if not line.strip():
+            return
+        try:
+            request = json.loads(line.decode("utf-8", "replace"))
+        except ValueError:
+            response = {"ok": False, "error": "the request is not valid JSON"}
+        else:
+            response = backend.handle(request)
+        connection.sendall(json.dumps(response).encode("utf-8") + b"\n")
+    except (OSError, struct.error) as error:
+        log("connection failed: %s" % error)
+    finally:
+        try:
+            connection.close()
+        except OSError:
+            pass
+
+
+def listening_socket():
+    """The socket to serve, from systemd if it was started by it."""
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = os.environ.get("LISTEN_FDS")
+    if listen_fds and listen_pid and int(listen_pid) == os.getpid() and int(listen_fds) >= 1:
+        # systemd passes the first socket as file descriptor 3, and the socket
+        # unit is what created it with its mode and its group.
+        return socket.fromfd(3, socket.AF_UNIX, socket.SOCK_STREAM)
+
+    os.makedirs(RUN_DIR, exist_ok=True)
+    if os.path.exists(SOCKET_PATH):
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.connect(SOCKET_PATH)
+        except OSError:
+            # Nobody is listening on it: a socket left behind by a backend that
+            # was killed.  It is safe to replace.
+            os.unlink(SOCKET_PATH)
+        else:
+            probe.close()
+            raise SystemExit("another jh7110-oobe-backend is already listening")
+        probe.close()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+    os.chmod(SOCKET_PATH, 0o660)
+    try:
+        greeter = pwd.getpwnam("lightdm")
+        os.chown(SOCKET_PATH, 0, greeter.pw_gid)
+    except (KeyError, PermissionError, OSError):
+        # No greeter account, or not root: the socket still works for root.
+        pass
+    server.listen(16)
+    return server
+
+
+def main():
+    if os.geteuid() != 0 and not TEST_MODE:
+        raise SystemExit("jh7110-oobe-backend must run as root")
+    if not hasattr(socket, "SO_PEERCRED"):
+        # macOS, which is where the host-side tests run; a board is Linux and
+        # always has it, so this line is a development convenience and not a
+        # property of the shipped system.
+        log("peer credentials are not available on this platform")
+    os.makedirs(STATE_DIR, exist_ok=True)
+    backend = Backend()
+    allowed = allowed_uids()
+    log("listening on %s" % SOCKET_PATH)
+    server = listening_socket()
+    try:
+        while True:
+            try:
+                connection, _address = server.accept()
+            except OSError as error:
+                if error.errno == errno.EINTR:
+                    continue
+                raise
+            serve_connection(connection, backend, allowed)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.close()
+
+
+if __name__ == "__main__":
+    main()
