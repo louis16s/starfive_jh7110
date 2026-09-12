@@ -188,6 +188,7 @@ jobs:
             build/${{ matrix.board }}/image/*.img.xz.sha256
             build/${{ matrix.board }}/packages/*.deb
             build/${{ matrix.board }}/u-boot/u-boot.bin
+            build/${{ matrix.board }}/u-boot/u-boot.itb
             build/${{ matrix.board }}/u-boot/u-boot.img
             build/${{ matrix.board }}/u-boot/u-boot-*.bin
             build/${{ matrix.board }}/u-boot/u-boot-*.img

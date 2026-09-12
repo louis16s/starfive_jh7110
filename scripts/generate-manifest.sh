@@ -62,7 +62,7 @@ mkdir -p "$output_dir/packages"
             printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"
         done
     find "$output_dir/u-boot" -maxdepth 1 -type f \
-        \( -name 'u-boot.bin' -o -name 'u-boot.img' -o -name 'u-boot-*.bin' -o -name 'u-boot-*.img' \) -print0 |
+        \( -name 'u-boot.bin' -o -name 'u-boot.itb' -o -name 'u-boot.img' -o -name 'u-boot-*.bin' -o -name 'u-boot-*.img' \) -print0 |
         sort -z |
         while IFS= read -r -d '' artifact; do
             printf '%s  %s\n' "$(sha256sum "$artifact" | awk '{print $1}')" "${artifact#"$REPO_ROOT/"}"

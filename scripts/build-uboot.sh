@@ -53,4 +53,17 @@ uboot_make() {
 uboot_make "$UBOOT_DEFCONFIG"
 uboot_make olddefconfig
 uboot_make -j"$jobs" all
+
+# JH7110 SPL loads the second stage as a FIT image containing OpenSBI and
+# U-Boot proper.  u-boot.img is the legacy mkimage output and is not the
+# SPI-NOR payload for this board; flashing it leaves SPL waiting at
+# "Trying to boot from SPI".  Fail here instead of publishing a bootable-
+# looking but unusable artifact.
+payload="$output_dir/u-boot.itb"
+[[ -s "$payload" ]] || die "missing JH7110 FIT payload: $payload"
+if command -v dumpimage >/dev/null 2>&1; then
+    dumpimage -l "$payload" >/dev/null 2>&1 \
+        || die "invalid JH7110 FIT payload: $payload"
+fi
+
 printf 'U-Boot build complete: %s\n' "$board"
