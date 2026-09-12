@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
-# Interactive first-run setup on the console.
+# Interactive first-run setup on the console, for the boards the desktop cannot
+# reach.
 #
-# This is the half of first boot that needs a person: the desktop account and
-# the password that protects it.  Everything a machine can do by itself lives
-# in jh7110-prepare, which this runs first when it has not run yet.
+# The normal first-run path is the graphical setup in the greeter session.  This
+# is the one that works when that cannot run at all - no display, no GTK, a board
+# reached over the serial console - or when the user asks for it:
 #
-# The image ships with root locked and no human account at all, so this is the
-# path that makes the board usable.  It is also the recovery path: when the
-# graphical setup cannot start - no display, no session, a board reached over
-# the serial console - this still creates or repairs the account:
+#     sudo systemctl start jh7110-console-setup     # on tty9
+#     sudo jh7110-console-setup                     # on the console you are on
 #
-#     sudo jh7110-console-setup
+# It asks for the desktop account and the password that protects it, and for the
+# device name; everything a machine can do by itself lives in jh7110-prepare,
+# which this runs first when it has not run yet.
 #
-# Remove /var/lib/jh7110/oobe.done to let it run again on the next boot.
+# The image ships with root locked and no human account at all, which is why
+# this has to exist and why it must stay reachable.
+#
+# Remove /var/lib/jh7110/oobe.done to let the graphical setup run again; that is
+# what `sudo jh7110-oobe --reset` does.
 set -Eeuo pipefail
 
 readonly STATE_DIR=/var/lib/jh7110
 readonly BOARD_CONFIG=/etc/jh7110/board.conf
 readonly DONE_FILE="$STATE_DIR/oobe.done"
 readonly ACCOUNT_TOOL=/usr/libexec/jh7110-account
+
+# The console the setup is meant to appear on.  tty1 belongs to the desktop -
+# LightDM and the wizard run there - so the recovery console is tty9.
+readonly SETUP_TTY=9
 
 die() {
     echo "jh7110-console-setup: $*" >&2
@@ -135,7 +144,13 @@ setup_desktop_account() {
         return 0
     fi
 
-    chvt 1 || die "cannot activate the setup console tty1"
+    # The prompts need a console in front of somebody.  Under systemd this runs
+    # on tty9 and is brought to the front; started by hand from the serial
+    # console there is no VT to switch to, and the dialogs simply appear where
+    # the command was run.
+    if ! chvt "$SETUP_TTY" 2>/dev/null; then
+        echo "jh7110-console-setup: no virtual console to switch to; staying on this terminal"
+    fi
 
     user_name=$(ask_user_name)
     password=$(ask_password "$user_name")

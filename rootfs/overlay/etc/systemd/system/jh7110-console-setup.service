@@ -1,32 +1,36 @@
 [Unit]
-Description=JH7110 interactive first-run setup (console)
+Description=JH7110 interactive setup on the recovery console (tty9)
 Documentation=https://github.com/louis16s/starfive_jh7110
-# The account the desktop logs in with does not exist until this has run, so
-# this is the one unit that still owns the console and still comes before the
-# greeter.  It is kept as the recovery path after the graphical setup exists:
-# a board whose desktop cannot start must still be able to create a user.
+# The graphical setup runs in the greeter session and is the normal path; this
+# is the one that works when the desktop cannot start at all - no display, no
+# GTK, a board reached over the serial console.  It is deliberately not part of
+# the boot: the greeter asks for it when the wizard cannot run or does not
+# finish, and a person can start it by hand:
+#
+#     sudo systemctl start jh7110-console-setup
+#
+# It is never enabled, and the boot never waits for it, so nothing here can
+# hold up a board whose desktop works.
 After=local-fs.target systemd-logind.service jh7110-prepare.service
 Wants=jh7110-prepare.service
-Before=display-manager.service getty@tty1.service
-Conflicts=getty@tty1.service
+Conflicts=getty@tty9.service
+Before=getty@tty9.service
 ConditionPathExists=!/var/lib/jh7110/oobe.done
 
 [Service]
 Type=oneshot
 Environment=TERM=linux
-# The dialog waits for a person, and a killed prompt would leave the board with
-# no usable account at all.  This is the behaviour the graphical setup
-# replaces; until then the desktop cannot start without it.
-TimeoutStartSec=infinity
+# Finite on purpose.  An interactive unit in the boot path would need an
+# unlimited timeout to avoid killing a prompt somebody is reading, but this one
+# holds nothing up, so an hour is enough for a person to find a keyboard and
+# short enough that a prompt nobody ever answers does not run for ever.
+TimeoutStartSec=3600
 ExecStart=/usr/libexec/jh7110-console-setup
 StandardInput=tty
 StandardOutput=tty
 StandardError=tty
-TTYPath=/dev/tty1
+TTYPath=/dev/tty9
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
 RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
