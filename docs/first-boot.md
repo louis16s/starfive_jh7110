@@ -40,7 +40,8 @@
 - `systemd-machine-id-setup`
 - `ssh-keygen -A`
 - rootfs 扩容（`growpart` + `resize2fs`）
-- 硬件报告写入 `/var/lib/jh7110/hardware.json`
+- 硬件报告写入 `/var/lib/jh7110/hardware-report.txt`（`jh7110-info` 的文本输出；
+  向导的硬件检测页另存一份结构化的 `/var/lib/jh7110/hardware.json`）
 
 完成后写 `/var/lib/jh7110/prepare.done`。**任何一步失败都不会阻塞 LightDM**，
 也不会写完成标记，所以下次开机会重试。这个单元永远不碰终端。

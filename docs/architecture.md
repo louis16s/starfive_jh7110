@@ -217,17 +217,20 @@ It is ordered `Before=display-manager.service` so the greeter shows the board's
 own name, and it is deliberately not a dependency of `graphical.target`: a
 resize or locale failure must not cost the user the desktop.
 
-`jh7110-console-setup.service` is the half that needs a person. It owns tty1 for
-as long as it runs - `Before=getty@tty1.service` plus
-`Conflicts=getty@tty1.service` is the "this unit owns the terminal until it
-finishes" idiom, and adding `After=` for the same unit would contradict the
-`Before=` and make systemd drop one of the jobs - and it is `Type=oneshot` with
-`TimeoutStartSec=infinity`, because a start timeout that fires while the dialog
-is on screen kills the prompt and leaves the board with no usable account. It
-runs `jh7110-prepare` first when `prepare.done` is missing, so it can complete a
-board whose preparation never finished, and it is the recovery path for a board
-whose graphical setup cannot start. It is skipped once
-`/var/lib/jh7110/oobe.done` exists.
+The half that needs a person is the graphical first-run setup, which runs in the
+greeter session as `lightdm` and changes the machine only through the privileged
+backend's socket (see [oobe.md](oobe.md)). `jh7110-console-setup.service` is its
+counterpart for a board that cannot show it: it owns tty9 for as long as it runs
+- `Before=getty@tty9.service` plus `Conflicts=getty@tty9.service` is the "this
+unit owns the terminal until it finishes" idiom, and adding `After=` for the
+same unit would contradict the `Before=` and make systemd drop one of the jobs.
+It is `Type=oneshot` with an hour's timeout rather than none: it is not in the
+boot path, so a prompt nobody ever answers must not run for ever, and an hour is
+long enough for a person to find a keyboard. It runs `jh7110-prepare` first when
+`prepare.done` is missing, so it can complete a board whose preparation never
+finished, and it is never enabled - the greeter asks for it when the wizard
+cannot run or does not finish, and a person can start it by hand. It is skipped
+once `/var/lib/jh7110/oobe.done` exists.
 
 The account it creates is the image's only human account. Root ships locked
 (`passwd --lock root`), the greeter lists accounts rather than offering a name
