@@ -13,6 +13,7 @@ UBOOT_SOURCE := $(shell bash -c 'source "board/$(BOARD)/profile.conf" >/dev/null
 check:
 	bash tests/test-hostname.sh
 	bash tests/test-account.sh
+	bash tests/test-diagnostics.sh
 	bash tests/test-greeter.sh
 	bash tests/test-kernel-merge.sh
 	python3 tests/test-oobe-backend.py

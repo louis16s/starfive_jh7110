@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# Collect the state of a board into one file that is safe to send to somebody.
+#
+# A board that will not start the desktop is diagnosed from what it can still
+# say, and what it says is a log full of things that are nobody else's
+# business: the Wi-Fi password in a NetworkManager profile, the session key in
+# a journal line, the SSH host key.  Nothing here copies a file for the bundle
+# unchanged - every one is filtered - and the secrets that have no useful
+# filtered form are left out and named in the manifest so that the person
+# sending it knows what is not there.
+#
+#     jh7110-diagnostics                 # ./jh7110-diagnostics-<board>-<time>.tar.gz
+#     jh7110-diagnostics -o /tmp/report.tar.gz
+#
+# It reads only; it changes nothing, and the board is no different afterwards.
+set -Eeuo pipefail
+
+readonly STATE_DIR=${JH7110_STATE_DIR:-/var/lib/jh7110}
+readonly ETC_DIR=${JH7110_ETC:-/etc/jh7110}
+readonly PROGRAM=jh7110-diagnostics
+# Everything read from /etc is read from under here.  On a board this is empty
+# and the paths are the real ones; the tests point it at a sandbox, where the
+# Wi-Fi profile and the sshd drop-in can be files of their own rather than the
+# host's.
+readonly ROOT=${JH7110_ROOT:-}
+
+output=
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -o | --output)
+            [[ $# -ge 2 ]] || { echo "$PROGRAM: $1 needs a file name" >&2; exit 2; }
+            output=$2
+            shift 2
+            ;;
+        -h | --help)
+            sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "$PROGRAM: unexpected argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+die() {
+    echo "$PROGRAM: $*" >&2
+    exit 1
+}
+
+# The board's own name and the current time, without a colon in the name: the
+# file is meant to be moved between filesystems.
+board_name=$(hostname 2>/dev/null || echo board)
+stamp=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo now)
+readonly board_name stamp
+[[ -n "$output" ]] || output="$PWD/jh7110-diagnostics-$board_name-$stamp.tar.gz"
+readonly output
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+readonly stage
+
+# Secrets are removed by key rather than by file, because the same line shape
+# appears in a NetworkManager profile, a journal line and a configuration file,
+# and a list of files to trust is a list that goes stale.  The value is what
+# goes; the key stays, so a reader can see that something was there.
+redact() {
+    sed -E \
+        -e 's/((psk|password|passwd|passphrase|secret|token|api[-_]?key|private[-_]?key|authorization|credential)[^=:]*[=:] *)[^[:space:]]+/\1REDACTED/Ig' \
+        -e 's/(-pw|-password|--password)[= ][^[:space:]]+/\1 REDACTED/Ig' \
+        -e 's#(//[^:/@[:space:]]+):[^@[:space:]]+@#\1:REDACTED@#g'
+}
+
+# Anything that is a key in its own right is dropped whole: a private key has
+# no useful redacted form, and half of one is still a key.
+has_secret_material() {
+    grep -qE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|ssh-(rsa|ed25519|ecdsa)[[:space:]]+AAAA' \
+        "$1" 2>/dev/null
+}
+
+collected=0
+# Bash 3.2 refuses ${#array[@]} on an empty array under `set -u`, and the list
+# of what was left out is usually empty; a file that either has lines or does
+# not says the same thing without the array.
+skipped_list="$stage/.left-out"
+: > "$skipped_list"
+
+# collect PATH NAME - the file's contents, redacted, or a note saying why not.
+collect() {
+    local path=$1 name=$2
+    if [[ ! -e "$path" ]]; then
+        printf '%s: not present\n' "$path" > "$stage/$name"
+        return 0
+    fi
+    if [[ ! -r "$path" ]]; then
+        printf '%s: not readable by %s\n' "$path" "$(id -un)" > "$stage/$name"
+        return 0
+    fi
+    if [[ -f "$path" ]] && has_secret_material "$path"; then
+        printf '%s: NOT INCLUDED - it holds a private key or an authorized key\n' \
+            "$path" > "$stage/$name"
+        printf '%s\n' "$path" >> "$skipped_list"
+        return 0
+    fi
+    redact < "$path" > "$stage/$name" 2>/dev/null \
+        || printf '%s: could not be read\n' "$path" > "$stage/$name"
+    collected=$((collected + 1))
+}
+
+# run NAME COMMAND... - the command's output, redacted.  A command that is not
+# installed and a command that fails both say so in the file rather than
+# stopping the collection: a bundle missing one section is still a bundle.
+run() {
+    local name=$1
+    shift
+    if ! command -v "$1" >/dev/null 2>&1; then
+        printf 'SKIP: %s is not installed\n' "$1" > "$stage/$name"
+        return 0
+    fi
+    local output_text status
+    output_text=$("$@" 2>&1) && status=0 || status=$?
+    printf 'command: %s\nstatus: %s\n\n' "$*" "$status" > "$stage/$name"
+    printf '%s\n' "$output_text" | redact >> "$stage/$name"
+    collected=$((collected + 1))
+}
+
+# The board describes itself: what was collected and what was deliberately left
+# behind.  Whoever receives the bundle can tell the difference between a
+# section that is empty because nothing was wrong and one that is empty because
+# it was not read.
+manifest() {
+    printf 'jh7110 diagnostics\n'
+    printf 'board: %s\n' "$board_name"
+    printf 'collected: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+    printf 'user: %s\n' "$(id -un)"
+    printf '\nWhat is in here\n'
+    printf '  Every file was filtered, not copied: values of keys named psk, password,\n'
+    printf '  secret, token or authorization are replaced with REDACTED.\n'
+    printf '\nWhat is deliberately not in here\n'
+    printf '  Private keys and authorized_keys files are never included.\n'
+    printf '  No account password is included; the image stores none, and the setup\n'
+    printf '  never writes one down.\n'
+    if [[ -s "$skipped_list" ]]; then
+        printf '\nLeft out because they hold key material:\n'
+        sed 's/^/  /' "$skipped_list"
+    fi
+    printf '\nSections\n'
+    # .left-out is this manifest's own working note rather than a section, and
+    # ls does not list dotfiles: the two happen to be the same set.
+    (cd "$stage" && ls -1) | sed 's/^/  /'
+}
+
+printf '%s: collecting\n' "$PROGRAM"
+
+run hardware jh7110-info
+run uname uname -a
+run kernel-command-line cat /proc/cmdline
+run memory cat /proc/meminfo
+run operating-system cat /etc/os-release
+run mounts cat /proc/mounts
+run block-devices lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
+run network-interfaces ip address show
+run network-connections nmcli --terse connection show
+run failed-units systemctl --failed --no-pager
+run journal-boot journalctl -b --no-pager -o short-precise
+run journal-setup journalctl -b --no-pager -u jh7110-prepare -u jh7110-oobe-backend \
+    -u jh7110-console-setup -u lightdm -u jh7110-pvr
+run dmesg dmesg
+run kernel-modules lsmod
+
+for unit in jh7110-prepare.service jh7110-oobe-backend.service \
+    jh7110-oobe-backend.socket jh7110-console-setup.service jh7110-pvr.service \
+    lightdm.service; do
+    run "unit-${unit}" systemctl status --no-pager --full "$unit"
+done
+
+collect "$ETC_DIR/board.conf" etc-jh7110-board.conf
+collect "$STATE_DIR/hardware.json" state-hardware.json
+collect "$STATE_DIR/prepare.done" state-prepare.done
+collect "$STATE_DIR/oobe-state.json" state-oobe-state.json
+collect "$ROOT/etc/lightdm/lightdm.conf.d/50-jh7110.conf" etc-lightdm.conf
+collect "$ROOT/etc/polkit-1/rules.d/50-jh7110-oobe.rules" etc-polkit.rules
+collect "$ROOT/etc/ssh/sshd_config.d/90-jh7110.conf" etc-sshd.conf
+collect "$ROOT/etc/network/interfaces" etc-network-interfaces
+
+# The NetworkManager profiles hold the Wi-Fi password, and the file is the one
+# place on the board where it is written down.  It is filtered like everything
+# else - and the filtering is what the tests check hardest.
+for profile in "$ROOT"/etc/NetworkManager/system-connections/*; do
+    [[ -f "$profile" ]] || continue
+    collect "$profile" "nm-connection-${profile##*/}"
+done
+
+# The setup's own record of what it did, which is what says whether a board is
+# stuck on a step or was never asked.
+collect "$STATE_DIR/oobe.done" state-oobe-done
+
+manifest > "$stage/README"
+
+tar -C "$stage" -czf "$output" . || die "could not write $output"
+chmod 0640 "$output" 2>/dev/null || true
+
+printf '%s: wrote %s\n' "$PROGRAM" "$output"
+printf '%s: %s sections; review it before sending it anywhere\n' \
+    "$PROGRAM" "$collected"
