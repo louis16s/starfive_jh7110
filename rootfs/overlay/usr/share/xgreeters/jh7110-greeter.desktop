@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=JH7110 First Run
+Comment=Run the first-run setup, then the ordinary greeter
+Exec=/usr/libexec/jh7110-greeter
+Type=Application

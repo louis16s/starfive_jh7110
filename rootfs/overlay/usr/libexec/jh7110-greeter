@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# The greeter that runs the first-run setup before it shows a login screen.
+#
+# LightDM starts this instead of lightdm-gtk-greeter.  A board that has been set
+# up just execs the real greeter and nothing here is ever seen; a board that has
+# not runs the graphical setup first, and the login screen follows in the same
+# session, which is why nothing has to restart LightDM to get from one to the
+# other.
+#
+# It runs as the greeter account and has no privilege: the wizard it starts
+# changes the machine only through the privileged backend's socket, whose method
+# table is fixed.
+#
+# Two things can go wrong, and neither may leave the board without a way in:
+#
+#   * the graphical stack is missing or the wizard cannot start at all - the
+#     console setup is asked for, which takes over tty9;
+#   * the wizard runs but the user does not finish - it is retried on the next
+#     login, up to a limit, after which the console setup is offered instead of
+#     trapping the user in a wizard they are not completing.
+#
+# Starting the console setup needs one permission and it is asked for through
+# polkit (see /etc/polkit-1/rules.d/50-jh7110-oobe.rules).  If that is refused,
+# the hint it prints says what to run instead.
+set -uo pipefail
+
+# /var/lib/jh7110 is where it is on a board; the tests point this elsewhere.
+readonly STATE_DIR=${JH7110_STATE_DIR:-/var/lib/jh7110}
+readonly DONE_FILE="$STATE_DIR/oobe.done"
+readonly WIZARD=${JH7110_WIZARD:-/usr/bin/jh7110-oobe}
+readonly GREETER=${JH7110_REAL_GREETER:-/usr/sbin/lightdm-gtk-greeter}
+readonly RECOVERY_UNIT=jh7110-console-setup.service
+readonly ATTEMPTS_FILE=${JH7110_ATTEMPTS_FILE:-${HOME:-/var/lib/lightdm}/.jh7110-oobe-attempts}
+
+# Three unfinished runs is enough to know that this board's graphical setup is
+# not going to be completed by trying again; the console is the way out.
+readonly ATTEMPT_LIMIT=3
+
+# Diagnostics go to standard error: standard output belongs to whatever the
+# session shows, and this runs inside lightdm's session where the only record
+# is the log of what the wrapper said.
+log() {
+    printf 'jh7110-greeter: %s\n' "$*" >&2
+}
+
+attempts() {
+    local value
+    value=$(cat "$ATTEMPTS_FILE" 2>/dev/null) || value=0
+    [[ "$value" =~ ^[0-9]+$ ]] || value=0
+    printf '%s' "$value"
+}
+
+add_attempt() {
+    printf '%s\n' "$(( $(attempts) + 1 ))" > "$ATTEMPTS_FILE" 2>/dev/null || true
+}
+
+ask_for_recovery() {
+    if systemctl start --no-block "$RECOVERY_UNIT" 2>/dev/null; then
+        log "asked for the console setup on tty9; press Ctrl+Alt+F9 to use it"
+    else
+        log "run 'sudo jh7110-console-setup' from the serial console to create an account"
+    fi
+}
+
+# Nothing below can do anything about a missing login screen, but a silent
+# black display is the one failure here that leaves no trace at all, and this
+# is the line that says why.
+if [[ ! -x "$GREETER" ]]; then
+    log "the login screen is missing: $GREETER"
+fi
+
+if [[ -e "$DONE_FILE" ]]; then
+    exec "$GREETER" "$@"
+fi
+
+if [[ ! -x "$WIZARD" ]]; then
+    log "the graphical setup is not installed"
+    ask_for_recovery
+    exec "$GREETER" "$@"
+fi
+
+# A board without GTK would otherwise run a wizard that dies on every boot, and
+# the user would have to sit through the retries before the recovery console is
+# offered.  --check imports the toolkit and opens no display, so this costs one
+# interpreter start and turns a board that cannot show the wizard at all into
+# the recovery path immediately.
+if ! "$WIZARD" --check >/dev/null 2>&1; then
+    log "the graphical setup cannot run on this board; using the console setup"
+    ask_for_recovery
+    exec "$GREETER" "$@"
+fi
+
+if (( $(attempts) >= ATTEMPT_LIMIT )); then
+    log "the graphical setup was started $ATTEMPT_LIMIT times without finishing"
+    ask_for_recovery
+    exec "$GREETER" "$@"
+fi
+
+log "starting the first-run setup"
+add_attempt
+"$WIZARD"
+
+# The wizard exits 0 whether the user finished or closed the window, so what
+# says which happened is the file it writes at the end, not its status.
+if [[ -e "$DONE_FILE" ]]; then
+    # The tally is about an unfinished setup; a finished one should not leave a
+    # board that is later asked to run the wizard again with fewer tries than
+    # the next user gets.
+    rm -f "$ATTEMPTS_FILE" 2>/dev/null || true
+    exec "$GREETER" "$@"
+fi
+
+log "the first-run setup did not finish"
+ask_for_recovery
+exec "$GREETER" "$@"
