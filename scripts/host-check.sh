@@ -5,6 +5,7 @@ readonly REQUIRED_COMMANDS=(
     bash git python3 curl make awk sed find sort rsync mmdebstrap qemu-riscv64-static
     riscv64-linux-gnu-gcc dtc dpkg-deb depmod chroot sfdisk losetup truncate
     mkfs.vfat mkfs.ext4 mount umount blkid realpath xz sha256sum sync
+    fdtget fdtput lsinitramfs
 )
 missing=0
 

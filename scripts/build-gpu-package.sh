@@ -41,7 +41,7 @@ readonly cache_dir="$REPO_ROOT/$SOURCE_ROOT/gpu"
 readonly archive="$cache_dir/img-gpu-powervr-bin-${pvr_version}.tar.gz"
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 readonly package_name=jh7110-pvr-rogue
-readonly package_version="${pvr_version}-2"
+readonly package_version="${pvr_version}-3"
 readonly output_package="$output_dir/${package_name}_${package_version}_riscv64.deb"
 mkdir -p "$cache_dir" "$output_dir"
 work_dir=$(mktemp -d "$output_dir/.gpu-package.XXXXXX")
@@ -56,7 +56,10 @@ trap cleanup EXIT
 
 if [[ ! -s "$archive" ]]; then
     curl --fail --location --retry 3 --retry-delay 2 \
-        --max-time 300 --output "$archive" "$pvr_url"
+        --max-time 300 --output "$work_dir/download.tar.gz" "$pvr_url"
+    actual_sha256=$(sha256sum "$work_dir/download.tar.gz" | awk '{print $1}')
+    [[ "$actual_sha256" == "$pvr_sha256" ]] || die "downloaded PVR archive SHA256 mismatch"
+    mv "$work_dir/download.tar.gz" "$archive"
 fi
 actual_sha256=$(sha256sum "$archive" | awk '{print $1}')
 [[ "$actual_sha256" == "$pvr_sha256" ]] \
@@ -68,6 +71,11 @@ top_dir=$(find "$payload_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)
 [[ -n "$top_dir" && -d "$top_dir/target" ]] \
     || die "PVR archive has no target directory"
 rsync -a "$top_dir/target/" "$stage_dir/"
+# Use Debian's Vulkan loader and GLVND entry points. The BSP's generic SONAME
+# aliases can shadow them via ldconfig; retain only vendor-named GLES libraries.
+rm -f "$stage_dir"/usr/lib/libvulkan.so* \
+    "$stage_dir"/usr/lib/libGLESv1_CM.so* "$stage_dir"/usr/lib/libGLESv2.so*
+
 # Debian Trixie uses merged-usr. Package firmware and units under /usr/lib,
 # never ship a real top-level /lib directory over the distribution symlink.
 if [[ -d "$stage_dir/lib" ]]; then
@@ -92,17 +100,8 @@ install -d -m 0755 \
 # The PVR kernel driver probes during initramfs, before the real rootfs is
 # mounted. Ship the exact firmware in every generated initramfs so a package
 # install cannot silently degrade to "firmware not found" at boot.
-printf '%s\n' \
-    '#!/bin/sh' \
-    'set -eu' \
-    '. /usr/share/initramfs-tools/hook-functions' \
-    'for firmware in /usr/lib/firmware/rgx.fw.* /usr/lib/firmware/rgx.sh.*; do' \
-    '    [ -s "$firmware" ] || continue' \
-    '    firmware_name=${firmware#/usr}' \
-    '    install -D -m 0644 "$firmware" "${DESTDIR}${firmware_name}"' \
-    'done' \
-    > "$stage_dir/etc/initramfs-tools/hooks/jh7110-pvr-firmware"
-chmod 0755 "$stage_dir/etc/initramfs-tools/hooks/jh7110-pvr-firmware"
+install -m 0755 "$REPO_ROOT/packages/gpu/initramfs-hook" \
+    "$stage_dir/etc/initramfs-tools/hooks/jh7110-pvr-firmware"
 
 printf '%s\n' \
     'Package: jh7110-pvr-rogue' \
@@ -111,20 +110,12 @@ printf '%s\n' \
     'Priority: optional' \
     'Architecture: riscv64' \
     'Maintainer: jh7110-desktop maintainers' \
+    'Depends: libc6, libdrm2, libstdc++6, libgcc-s1, libvulkan1, initramfs-tools, kmod' \
     'Description: StarFive JH7110 IMG BXE-4-32 PowerVR runtime' \
     ' Licensed IMG GPU firmware and userspace runtime from the StarFive BSP.' \
     > "$stage_dir/DEBIAN/control"
 
-printf '%s\n' \
-    '#!/bin/sh' \
-    'set -eu' \
-    'ldconfig' \
-    'if command -v update-initramfs >/dev/null 2>&1; then' \
-    '    set -- /boot/initrd.img-*' \
-    '    [ -e "$1" ] && update-initramfs -u -k all' \
-    'fi' \
-    > "$stage_dir/DEBIAN/postinst"
-chmod 0755 "$stage_dir/DEBIAN/postinst"
+install -m 0755 "$REPO_ROOT/packages/gpu/postinst" "$stage_dir/DEBIAN/postinst"
 
 printf '%s\n' \
     "Source URL: $pvr_url" \
@@ -138,13 +129,11 @@ printf '%s\n' \
     'Description=StarFive PowerVR kernel services' \
     'After=local-fs.target systemd-modules-load.service' \
     'Before=display-manager.service' \
-    'ConditionPathExists=/etc/init.d/rc.pvr' \
     '' \
     '[Service]' \
     'Type=oneshot' \
     'TimeoutStartSec=30' \
-    'ExecStart=/etc/init.d/rc.pvr start' \
-    'ExecStop=/etc/init.d/rc.pvr stop' \
+    'ExecStart=/sbin/modprobe pvrsrvkm' \
     'RemainAfterExit=yes' \
     '' \
     '[Install]' \

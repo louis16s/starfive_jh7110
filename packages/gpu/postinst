@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    configure)
+        ldconfig
+        if command -v update-initramfs >/dev/null 2>&1; then
+            set -- /boot/initrd.img-*
+            if [ -e "$1" ]; then
+                update-initramfs -u -k all
+            fi
+        fi
+        ;;
+esac
+exit 0

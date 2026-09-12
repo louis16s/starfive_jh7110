@@ -26,11 +26,11 @@ class ReleaseAssets(unittest.TestCase):
                     data = board.encode()
                     (folder / filename).write_bytes(data)
                     (folder / (filename + ".sha256")).write_text(f"{hashlib.sha256(data).hexdigest()}  {filename}\n")
-                    for name in ("build-manifest.txt", "u-boot.bin", "linux-image.deb"):
+                    for name in ("build-manifest.txt", "u-boot.bin", "u-boot.itb", "u-boot-spl.bin.normal.out", "linux-image.deb"):
                         (folder / name).write_bytes(data)
                 subprocess.run(["bash", "-Eeuo", "pipefail", "-c", stage], cwd=root, check=True)
                 assets = [p for pattern in patterns.splitlines() if pattern for p in root.glob(pattern)]
-                self.assertEqual(len(assets), 10, workflow)
+                self.assertEqual(len(assets), 14, workflow)
                 self.assertEqual(len({p.name for p in assets}), len(assets), workflow)
                 for checksum in (p for p in assets if p.name.endswith(".sha256")):
                     expected, name = checksum.read_text().split()

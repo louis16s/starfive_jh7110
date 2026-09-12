@@ -1,0 +1,4 @@
+# Fast compression for the JH7110 U74 cores; allocate physical RAM on demand.
+ALGO=lz4
+PERCENT=25
+PRIORITY=100

@@ -17,7 +17,7 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 - linux-image-6.12.5+_1.0.0_riscv64.deb
 - linux-headers-6.12.5+_1.0.0_riscv64.deb
 - linux-libc-dev_1.0.0_riscv64.deb
-- jh7110-pvr-rogue_1.19.6345021-1_riscv64.deb（下一次构建起）
+- jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb（下一次构建起）
 
 镜像已经包含 Debian 基础系统、XFCE、LightDM、Firefox ESR、Python 3、开发工具、PipeWire、NetworkManager、Podman、Mesa 图形工具和硬件诊断工具；下一次构建还会将获授权的 StarFive PVR runtime 纳入镜像。
 

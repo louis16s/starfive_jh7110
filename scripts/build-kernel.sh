@@ -44,9 +44,15 @@ done
 # module rather than built-in. This also lets the userspace service choose the
 # number of devices and compressor at runtime.
 "$kernel_source/scripts/config" --file "$output_dir/.config" --module ZRAM
+# LZ4 keeps swap compression inexpensive on the U74 cores. Retain LZO for
+# existing user configurations; explicitly match the image's zramswap policy.
+for symbol in SWAP ZRAM_BACKEND_LZ4 ZRAM_BACKEND_LZO ZRAM_DEF_COMP_LZ4; do
+    "$kernel_source/scripts/config" --file "$output_dir/.config" --enable "$symbol"
+done
+"$kernel_source/scripts/config" --file "$output_dir/.config" --disable ZRAM_DEF_COMP_LZORLE
 kernel_make olddefconfig
 # Fail before the expensive build if the locked BSP loses graphics support.
-for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID; do
+for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE SWAP ZRAM_BACKEND_LZ4 VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID; do
     grep -qx "CONFIG_${symbol}=y" "$output_dir/.config" \
         || die "required BSP option missing: CONFIG_$symbol"
 done

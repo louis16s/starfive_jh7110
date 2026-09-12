@@ -128,7 +128,7 @@ install -m 0755 "$(command -v qemu-riscv64-static)" "$qemu_target"
 shopt -s nullglob
 gpu_packages=("$board_package_dir"/jh7110-pvr-rogue_*.deb)
 shopt -u nullglob
-[[ ${#gpu_packages[@]} -le 1 ]] || die "multiple GPU packages found in $board_package_dir"
+[[ ${#gpu_packages[@]} -eq 1 ]] || die "expected exactly one GPU package in $board_package_dir; run make BOARD=$board gpu-package"
 gpu_deb_name=
 if [[ ${#gpu_packages[@]} -eq 1 ]]; then
     gpu_deb_name=$(basename "${gpu_packages[0]}")
@@ -155,7 +155,7 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             LC_MESSAGES="$DEFAULT_LOCALE"
         passwd --lock root
         systemctl preset-all
-        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-firstboot
+        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-firstboot jh7110-pvr zramswap
         systemctl set-default graphical.target
         # smartd is useful when a SMART-capable disk is attached, but it is
         # not a boot prerequisite and exits noisily on SD/eMMC-only boards.

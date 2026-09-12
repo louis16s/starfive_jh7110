@@ -6,7 +6,7 @@ not committed to Git. `make BOARD=visionfive2 gpu-package` or
 `sources.lock`, verifies its SHA256, and creates:
 
 ```text
-build/<board>/packages/jh7110-pvr-rogue_1.19.6345021-1_riscv64.deb
+build/<board>/packages/jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb
 ```
 
 The payload is the official StarFive `soft_3rdpart` IMG GPU archive at commit

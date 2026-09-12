@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <!-- Avoid an extra compositing pass in the software-rendered X11 desktop. -->
+    <property name="use_compositing" type="bool" value="false"/>
+  </property>
+</channel>

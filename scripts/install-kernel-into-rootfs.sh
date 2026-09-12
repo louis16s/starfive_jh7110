@@ -15,7 +15,7 @@ board=$1
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
 
-for command_name in dpkg-deb depmod chroot; do
+for command_name in dpkg-deb depmod chroot lsinitramfs; do
     command -v "$command_name" >/dev/null 2>&1 || die "missing command: $command_name"
 done
 
@@ -99,4 +99,11 @@ chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
 [[ -s "$rootfs_dir/boot/initrd.img-$kernel_release" ]] \
     || die "mkinitramfs did not create a usable initrd"
+initrd_files=$(lsinitramfs "$rootfs_dir/boot/initrd.img-$kernel_release")
+for firmware in rgx.fw.36.50.54.182 rgx.sh.36.50.54.182; do
+    if ! grep -Fxq "lib/firmware/$firmware" <<<"$initrd_files" &&
+        ! grep -Fxq "usr/lib/firmware/$firmware" <<<"$initrd_files"; then
+        die "initrd is missing required PVR firmware: $firmware"
+    fi
+done
 printf 'kernel installed into rootfs: %s (%s)\n' "$board" "$kernel_release"

@@ -2,12 +2,13 @@
 set -Eeuo pipefail
 
 # Run from a terminal in the logged-in desktop, preserving DISPLAY/XAUTHORITY.
+export LC_ALL=C
 failures=0
 warnings=0
 
 printf 'GPU kernel modules:\n'
 loaded_modules=0
-for module in pvrsrvkm pvr drm_starfive; do
+for module in pvrsrvkm pvr; do
     if [[ -d "/sys/module/$module" ]]; then
         printf '  LOADED %s\n' "$module"
         loaded_modules=1
@@ -16,10 +17,10 @@ done
 if ((loaded_modules == 0)); then
     module_dir="/lib/modules/$(uname -r)"
     if [[ -d "$module_dir" ]] && find "$module_dir" -type f \
-        \( -iname '*pvrsrvkm*.ko*' -o -iname '*pvr*.ko*' -o -iname '*drm_starfive*.ko*' \) \
+        \( -iname '*pvrsrvkm*.ko*' -o -iname '*pvr*.ko*'  \) \
         -print -quit | grep -q .; then
-        printf 'WARN GPU: PVR module exists but is not loaded\n'
-        warnings=$((warnings + 1))
+        printf 'FAIL GPU: PVR module exists but is not loaded\n'
+        failures=$((failures + 1))
     else
         printf 'FAIL GPU: no PVR kernel module loaded or installed\n'
         failures=$((failures + 1))
@@ -28,13 +29,13 @@ fi
 
 printf 'GPU firmware and userspace:\n'
 firmware_count=0
-for firmware in /lib/firmware/rgx.*.36.50.54.182; do
-    if [[ -f "$firmware" ]]; then
+for firmware in /lib/firmware/rgx.fw.36.50.54.182 /lib/firmware/rgx.sh.36.50.54.182; do
+    if [[ -s "$firmware" ]]; then
         printf '  FOUND %s\n' "$firmware"
         firmware_count=$((firmware_count + 1))
     fi
 done
-if ((firmware_count == 0)); then
+if ((firmware_count != 2)); then
     printf 'FAIL GPU: IMG BXE firmware is missing\n'
     failures=$((failures + 1))
 fi
@@ -47,7 +48,7 @@ fi
 
 printf 'Kernel DRM messages:\n'
 if dmesg_output=$(dmesg 2>&1); then
-    grep -iE 'pvr|pvrsrvkm|gpu|drm|starfive' <<<"$dmesg_output" | tail -80
+    { grep -iE 'pvr|pvrsrvkm|gpu|drm|starfive' <<<"$dmesg_output" || true; } | tail -80
 else
     printf 'WARN GPU: dmesg is restricted for this user\n'
     warnings=$((warnings + 1))
@@ -56,26 +57,28 @@ probe() {
     local label=$1
     shift
     if ! command -v "$1" >/dev/null 2>&1; then
-        printf 'WARN %s: 未安装 %s\n' "$label" "$1"
-        warnings=$((warnings + 1))
+        printf 'FAIL %s: 未安装 %s\n' "$label" "$1"
+        failures=$((failures + 1))
         return
     fi
     local result
     if result=$(timeout 30 "$@" 2>&1); then
         printf '%s\n' "$result"
-        if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
-            if grep -Eiq 'powervr|img[ -]?bxe|rogue|img technologies' <<<"$result"; then
-                printf 'WARN %s: 同时发现硬件和软件渲染器；请确认当前会话选择 PowerVR\n' "$label"
-                warnings=$((warnings + 1))
-            else
-                printf 'FAIL %s: 仅检测到软件渲染，不能作为硬件加速通过\n' "$label"
-                failures=$((failures + 1))
-            fi
-        else
-            printf 'INFO %s: 命令成功；请核对设备和 renderer 是否为 PowerVR\n' "$label"
-        fi
+        case "$label" in
+            Vulkan|OpenGL|EGL)
+                if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
+                    printf 'FAIL %s: 发现软件渲染器，不能确认硬件加速通过\n' "$label"
+                    failures=$((failures + 1))
+                elif ! grep -Eiq 'powervr|img[ -]?bxe|rogue|img technologies' <<<"$result"; then
+                    printf 'FAIL %s: 没有 PowerVR renderer/device 证据\n' "$label"
+                    failures=$((failures + 1))
+                else
+                    printf 'PASS %s: 发现 PowerVR 设备\n' "$label"
+                fi
+                ;;
+        esac
     else
-        printf 'WARN %s: 命令失败或超时\n%s\n' "$label" "$result"
+        printf 'FAIL %s: 命令失败或超时\n%s\n' "$label" "$result"
         failures=$((failures + 1))
     fi
 }
@@ -89,7 +92,16 @@ else
     printf 'FAIL: 无 DRM 设备\n'
     failures=$((failures + 1))
 fi
+connected=0
 for connector in /sys/class/drm/card*-HDMI-A-*; do
+    if [[ -r "$connector/status" && $(<"$connector/status") == connected ]]; then
+        connected=$((connected + 1))
+        if [[ ! -r "$connector/modes" || ! -r "$connector/enabled" ]] ||
+            [[ -z $(<"$connector/modes") || $(<"$connector/enabled") != enabled ]]; then
+            printf 'FAIL HDMI: 已连接但没有模式或未启用\n'
+            failures=$((failures + 1))
+        fi
+    fi
     printf '\nHDMI: %s\n' "${connector##*/}"
     for field in status enabled modes; do
         if [[ -r "$connector/$field" ]]; then
@@ -98,13 +110,25 @@ for connector in /sys/class/drm/card*-HDMI-A-*; do
         fi
     done
 done
+if ((connected == 0)); then
+    printf 'FAIL HDMI: 没有已连接的 HDMI 输出\n'
+    failures=$((failures + 1))
+fi
 probe DRM drm_info
-probe Vulkan vulkaninfo --summary
+# Isolate the IMG ICD: enumeration of a CPU fallback must not hide GPU failure.
+if [[ -s /etc/vulkan/icd.d/icdconf.json ]]; then
+    probe Vulkan env VK_DRIVER_FILES=/etc/vulkan/icd.d/icdconf.json \
+        VK_ICD_FILENAMES=/etc/vulkan/icd.d/icdconf.json vulkaninfo --summary
+else
+    printf 'FAIL Vulkan: IMG ICD manifest is missing\n'
+    failures=$((failures + 1))
+fi
 if [[ -n "${DISPLAY:-}" ]]; then
     probe OpenGL glxinfo -B
     probe Display xrandr --current
 else
     printf 'SKIP: X11 检测需要在桌面终端执行\n'
+    failures=$((failures + 1))
 fi
 if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     probe EGL eglinfo -B

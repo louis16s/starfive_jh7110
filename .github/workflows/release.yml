@@ -53,6 +53,8 @@ jobs:
             release/visionfive2/**/*.sha256
             release/visionfive2/**/*.deb
             release/visionfive2/**/*.bin
+            release/visionfive2/**/*.itb
+            release/visionfive2/**/*.normal.out
             release/visionfive2/**/*.img
             release/visionfive2/**/*.dtb
             release/visionfive2/**/*build-manifest.txt
@@ -60,6 +62,8 @@ jobs:
             release/mars/**/*.sha256
             release/mars/**/*.deb
             release/mars/**/*.bin
+            release/mars/**/*.itb
+            release/mars/**/*.normal.out
             release/mars/**/*.img
             release/mars/**/*.dtb
             release/mars/**/*build-manifest.txt

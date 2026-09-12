@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    prereqs) exit 0 ;;
+esac
+
+: "${DESTDIR:?initramfs destination is required}"
+for name in rgx.fw.36.50.54.182 rgx.sh.36.50.54.182; do
+    firmware="/usr/lib/firmware/$name"
+    [ -s "$firmware" ] || { echo "Missing PVR firmware: $firmware" >&2; exit 1; }
+    install -D -m 0644 "$firmware" "$DESTDIR/lib/firmware/$name"
+done

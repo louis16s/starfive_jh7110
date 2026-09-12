@@ -24,13 +24,14 @@ Mars 其他 PCB 修订版引脚与电源对应关系尚需核对。
 
 构建检查 DRM、Verisilicon、HDMI 和 IMG Rogue 必须启用。工程从
 `sources.lock` 中固定的 StarFive `img-gpu-powervr-bin-1.19.6345021.tar.gz`
-生成 `jh7110-pvr-rogue_1.19.6345021-1_riscv64.deb`，构建时校验归档
+生成 `jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb`，构建时校验归档
 SHA256，并通过 dpkg 安装 firmware、PVR userspace、Vulkan ICD 和
 `rc.pvr`。用户已确认该 GPU 包具备镜像分发许可；包内 `SOURCE` 文件仍
 记录来源、版本、哈希和授权说明，便于审计。
 
-安装包会启用 `jh7110-pvr.service`，由官方 `rc.pvr` 负责加载
-`pvrsrvkm`/`drm_starfive` 并启动 PVR 服务。Mesa 的 GBM/EGL、Wayland
+安装包会启用 `jh7110-pvr.service`，仅请求加载 `pvrsrvkm`（也支持
+内建驱动）。锁定的 6.12 显示驱动是 `vs_drm`，不再调用旧版
+`rc.pvr` 加载不存在的 `drm_starfive`，关机时也不主动卸载显示驱动。Mesa 的 GBM/EGL、Wayland
 和通用 Vulkan loader 来自 Debian；真正的 PowerVR 渲染取决于选中的
 6.12 BSP 内核、Mars/VF2 DTB、firmware 和 DDK ABI 是否匹配。CI 能验证
 打包和安装，不能代替两块实板的 DRM/Vulkan/HDMI 验收。
@@ -55,3 +56,21 @@ HDMI 输出与 GPU 渲染是两条不同路径，软件渲染也可能显示 XFC
 DRM 节点、HDMI 状态、Vulkan、EGL 和 OpenGL；检测到 llvmpipe/softpipe/
 lavapipe 会失败，避免把 CPU 软件渲染误报为 GPU 通过。HDMI 输出与 GPU
 渲染是两条不同路径，软件渲染也可能显示 XFCE。
+
+## 2026-09-12 审查后的默认策略
+
+PVR 包保留厂商专用库，删除其旧 Vulkan loader 和通用 GLES SONAME
+链接，让 Debian 的 Vulkan loader 与 GLVND 管理系统入口。Vulkan 检测
+通过 `VK_DRIVER_FILES` 和兼容变量 `VK_ICD_FILENAMES` 只选择 IMG ICD。
+普通 OpenGL/EGL 应用仍需要与厂商 DDK 相容的 Mesa 集成；安装 PVR 包
+不能证明 Debian Mesa 已具备硬件加速。
+
+X11 保留 modesetting 的软件显示路径，并默认关闭 XFWM 合成，减少
+窗口移动与重绘的额外合成开销。可在 XFCE 窗口管理器微调中重新启用。
+内存交换采用 LZ4 zram，逻辑容量为内存的 25%，物理内存按需占用。
+这些是性能配置调整，尚无实板帧率、功耗或延迟的前后对比数据。
+
+图形诊断在没有 HDMI 连接、缺少任一 GPU 固件、缺少检测命令、
+软件渲染或未识别 PowerVR 时返回失败；无相关 dmesg 行不会提前退出。
+完整 X11 验收需在已登录的桌面终端运行。详细审查记录见
+[代码审查](audit-20260912.md)。
