@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Runtime(unittest.TestCase):
+    def test_gpu_packaging_removes_legacy_loader_and_launcher(self):
+        script = (ROOT / 'scripts/build-gpu-package.sh').read_text()
+        self.assertIn('libvulkan-1.so', script)
+        self.assertIn('rm -f "$stage_dir/etc/init.d/rc.pvr"', script)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

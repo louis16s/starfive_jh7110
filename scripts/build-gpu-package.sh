@@ -74,7 +74,12 @@ rsync -a "$top_dir/target/" "$stage_dir/"
 # Use Debian's Vulkan loader and GLVND entry points. The BSP's generic SONAME
 # aliases can shadow them via ldconfig; retain only vendor-named GLES libraries.
 rm -f "$stage_dir"/usr/lib/libvulkan.so* \
+    "$stage_dir"/usr/lib/libvulkan-1.so \
     "$stage_dir"/usr/lib/libGLESv1_CM.so* "$stage_dir"/usr/lib/libGLESv2.so*
+# The vendor archive also ships an init.d launcher that targets the old
+# drm_starfive module. The systemd unit below loads the current pvrsrvkm
+# driver; leaving the obsolete script installed invites accidental use.
+rm -f "$stage_dir/etc/init.d/rc.pvr"
 
 # Debian Trixie uses merged-usr. Package firmware and units under /usr/lib,
 # never ship a real top-level /lib directory over the distribution symlink.
