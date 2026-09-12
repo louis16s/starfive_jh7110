@@ -80,7 +80,19 @@ resolve_groups() {
 create_account() {
     local name=$1
     shift
-    local groups extra
+    local groups extra comment=()
+
+    # The display name is the one part of an account that is neither a secret
+    # nor an identifier, and it arrives in the environment rather than in an
+    # argument so that a name with spaces or CJK characters cannot be mangled
+    # on the way in.  GECOS uses ':' and ',' as separators, so neither can be
+    # part of it.
+    if [[ -n "${JH7110_DISPLAY_NAME:-}" ]]; then
+        if [[ "$JH7110_DISPLAY_NAME" == *[,:]* ]]; then
+            die "the display name must not contain ',' or ':'"
+        fi
+        comment=(--comment "$JH7110_DISPLAY_NAME")
+    fi
 
     validate_name "$name"
     IFS= read -r password || die "no password on standard input"
@@ -94,16 +106,22 @@ create_account() {
 
     if getent passwd "$name" >/dev/null 2>&1; then
         # The account exists: this is a repair, not a second account.
+        if [[ ${#comment[@]} -gt 0 ]]; then
+            usermod ${comment[@]+"${comment[@]}"} "$name" \
+                || die "could not update the display name of $name"
+        fi
         if [[ -n "$groups" ]]; then
             usermod --append --groups "$groups" "$name" \
                 || die "could not update the group list of $name"
         fi
     else
         if [[ -n "$groups" ]]; then
-            useradd --create-home --shell /bin/bash --user-group --groups "$groups" "$name" \
+            useradd --create-home --shell /bin/bash --user-group \
+                ${comment[@]+"${comment[@]}"} --groups "$groups" "$name" \
                 || die "could not create the account $name"
         else
-            useradd --create-home --shell /bin/bash --user-group "$name" \
+            useradd --create-home --shell /bin/bash --user-group \
+                ${comment[@]+"${comment[@]}"} "$name" \
                 || die "could not create the account $name"
         fi
     fi

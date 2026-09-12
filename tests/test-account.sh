@@ -66,10 +66,12 @@ EOF
 # every process on the board.
 cat > "$sandbox/bin/log-call" <<'STUB'
 #!/usr/bin/env bash
+# Arguments are bracketed so a test can tell one argument from two: the display
+# name arrives with a space in it.
 printf '%s' "${1:-}" >> "$JH7110_SANDBOX/calls.log"
 shift
 for argument in "$@"; do
-    printf ' %s' "$argument" >> "$JH7110_SANDBOX/calls.log"
+    printf ' [%s]' "$argument" >> "$JH7110_SANDBOX/calls.log"
 done
 printf '\n' >> "$JH7110_SANDBOX/calls.log"
 STUB
@@ -177,6 +179,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --create-home | --user-group) shift ;;
         --shell) shift 2 ;;
+        --comment) shift 2 ;;
         --groups) groups=$2; shift 2 ;;
         *) name=$1; shift ;;
     esac
@@ -205,12 +208,15 @@ groups=
 while [[ $# -gt 0 ]]; do
     case $1 in
         --append) shift ;;
+        --comment) shift 2 ;;
         --groups) groups=$2; shift 2 ;;
         *) name=$1; shift ;;
     esac
 done
-[[ -n "$name" && -n "$groups" ]] || exit 1
-sandbox-group-add "$name" $(printf '%s' "$groups" | tr ',' ' ')
+[[ -n "$name" ]] || exit 1
+if [[ -n "$groups" ]]; then
+    sandbox-group-add "$name" $(printf '%s' "$groups" | tr ',' ' ')
+fi
 STUB
 
 # The one tool that ever sees the password.  It records the pipe rather than
@@ -348,6 +354,25 @@ printf 'another\n' | run_account create extra-user cdrom \
     || fail 'creating an account with an extra group failed'
 in_group extra-user cdrom || fail 'an explicitly requested group was not added'
 in_group extra-user sudo || fail 'the desktop groups were dropped when one was named'
+
+# The display name goes in through the environment, not through an argument:
+# it is the one field that can hold spaces and CJK characters, and an argument
+# list is the wrong place for either.
+: > "$sandbox/calls.log"
+printf 'with a name\n' | JH7110_DISPLAY_NAME='Zhang San' run_account create named-user \
+    || fail 'creating an account with a display name failed'
+grep -q '\[--comment\] \[Zhang San\]' "$sandbox/calls.log" \
+    || fail "the display name was not passed as one argument: $(cat "$sandbox/calls.log")"
+: > "$sandbox/calls.log"
+printf 'with a name\n' | JH7110_DISPLAY_NAME='张 三' run_account create named-user \
+    || fail 'repairing an account with a display name failed'
+grep -q '^usermod \[--comment\] \[张 三\]' "$sandbox/calls.log" \
+    || fail "a repair did not bring the display name up to date: $(cat "$sandbox/calls.log")"
+# GECOS separates its fields with ',' and ':', so either one in the display
+# name would silently truncate it.
+if printf 'x\n' | JH7110_DISPLAY_NAME='San, Zhang' run_account create named-user >/dev/null 2>&1; then
+    fail 'a display name with a comma was accepted'
+fi
 
 # ---------------------------------------------------------------------------
 # Running it again repairs the account instead of creating a second one
