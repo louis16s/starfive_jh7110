@@ -15,6 +15,20 @@ class Runtime(unittest.TestCase):
         self.assertIn('libvulkan-1.so', script)
         self.assertIn('rm -f "$stage_dir/etc/init.d/rc.pvr"', script)
 
+    def test_rootfs_asserts_graphics_runtime(self):
+        # The vendor archive carries no EGL runtime, so the whole GL/EGL stack
+        # is Mesa and arrives only through hard dependencies.  The build has to
+        # keep failing the image when one of those libraries is missing rather
+        # than boot a desktop without GL.
+        script = (ROOT / 'scripts/build-rootfs.sh').read_text()
+        for library in ('libEGL.so.1', 'libEGL_mesa.so.0', 'libGLX_mesa.so.0',
+                        'libGLESv2.so.2', 'libgbm.so.1', 'libvulkan.so.1',
+                        'dri/swrast_dri.so', 'dri/kms_swrast_dri.so'):
+            self.assertIn(library, script)
+        # Vulkan is the only hardware path and comes from the GPU package.
+        self.assertIn('/etc/vulkan/icd.d/icdconf.json', script)
+        self.assertIn('/usr/lib/libVK_IMG.so', script)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

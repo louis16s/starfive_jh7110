@@ -190,6 +190,31 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         test -s /usr/share/xsessions/xfce.desktop
         test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop
         test -s /etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf
+        # The desktop GL/EGL stack is Mesa and runs on the CPU: the locked PVR
+        # archive contains no EGL runtime at all (only a static libIMGeglsup.a
+        # in its staging tree), so there is no vendor EGL for GLVND to load.
+        # mmdebstrap also bootstraps with Apt::Install-Recommends false, which
+        # means these libraries are only guaranteed by hard dependencies.  A
+        # snapshot update that drops one would otherwise ship an image that
+        # boots to a desktop with no GL and no EGL, so fail the build here.
+        for graphics_library in libEGL.so.1 libEGL_mesa.so.0 libGLX_mesa.so.0 \
+            libGLESv2.so.2 libgbm.so.1 libvulkan.so.1 \
+            dri/swrast_dri.so dri/kms_swrast_dri.so; do
+            graphics_matches=(/usr/lib/*-linux-gnu/$graphics_library)
+            # An unmatched glob stays literal and a match can be an empty file,
+            # so both cases are reported instead of failing on a bare test -s.
+            if [[ ${#graphics_matches[@]} -ne 1 ||
+                ! -s "${graphics_matches[0]}" ]]; then
+                echo "rootfs: missing or empty graphics runtime: $graphics_library" >&2
+                exit 1
+            fi
+        done
+        # Vulkan is the only hardware acceleration path on this board, and it
+        # is provided by the GPU package rather than by Debian.  Assert the
+        # installed contract (ICD manifest plus its library) so a packaging
+        # regression fails the build instead of the first boot of the board.
+        test -s /etc/vulkan/icd.d/icdconf.json
+        test -s /usr/lib/libVK_IMG.so
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
         apt-get clean

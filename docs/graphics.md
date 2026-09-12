@@ -76,6 +76,24 @@ PVR 包保留厂商专用库，删除其旧 Vulkan loader 和通用 GLES SONAME
 普通 OpenGL/EGL 应用仍需要与厂商 DDK 相容的 Mesa 集成；安装 PVR 包
 不能证明 Debian Mesa 已具备硬件加速。
 
+核对锁定归档（`img-gpu-powervr-bin-1.19.6345021.tar.gz`）里每个
+`.so` 的 SONAME 与 NEEDED 得到两点结论：归档的 `target/usr/lib`
+**完全没有 EGL 运行库**（只有 `staging/usr/lib/libIMGeglsup.a` 静态库
+和头文件），所以这块板子上没有可供 GLVND 加载的厂商 EGL，硬件
+GLES 路径不可达；而 `libVK_IMG.so` 的 SONAME 是 `libVK_IMG.so.1`，
+NEEDED 只有 `libsrv_um`/`libusc`/`libufwriter`/`libdrm`/libc，不依赖
+被删除的 `libvulkan.so*`，因此删除厂商 loader 不会破坏 Vulkan ICD。
+硬件路径只剩 Vulkan（`libVK_IMG.so`）与 OpenCL（`libPVROCL.so`）。
+
+mmdebstrap 会写入 `Apt::Install-Recommends false`，而构建脚本没有
+覆盖它，所以镜像里的 Mesa 软件栈完全由硬依赖保证。按快照索引计算
+的依赖闭包（1278 个包）包含 `libegl1`、`libegl-mesa0`、`libglx-mesa0`、
+`libglvnd0`、`libgl1-mesa-dri`、`libgles2`、`libgbm1`、`libvulkan1`。
+`scripts/build-rootfs.sh` 现在在打包前断言这些运行库和 `swrast_dri.so`、
+`kms_swrast_dri.so` 存在且非空，并核对 GPU 包的
+`/etc/vulkan/icd.d/icdconf.json` 与 `/usr/lib/libVK_IMG.so`，避免快照
+更新或打包回退后交付一个没有 GL/EGL 的桌面镜像。
+
 X11 保留 modesetting 的软件显示路径，并默认关闭 XFWM 合成，减少
 窗口移动与重绘的额外合成开销。可在 XFCE 窗口管理器微调中重新启用。
 内存交换采用 LZ4 zram，逻辑容量为内存的 25%，物理内存按需占用。
