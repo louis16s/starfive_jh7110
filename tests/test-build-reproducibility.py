@@ -12,6 +12,7 @@ board that does not come up.
 import datetime
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -265,6 +266,45 @@ class BuildWiring(unittest.TestCase):
         text = (ROOT / 'scripts/build-gpu-package.sh').read_text()
         self.assertIn('find "$stage_dir/etc/init.d" -depth -type d -empty -delete', text)
 
+    def test_rootfs_build_pins_its_timestamps(self):
+        # The rootfs is where the image's files come from, and its chroot runs
+        # tools that stamp the moment they ran; the epoch has to reach them, and
+        # env -i drops everything that is not named on the command line.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text()
+        self.assertIn('source "$REPO_ROOT/scripts/lib/build-timestamps.sh"', text)
+        self.assertIn('\npin_build_timestamps\n', text)
+        self.assertIn('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"', text)
+        self.assertLess(text.index('\npin_build_timestamps\n'),
+                        text.index('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"'))
+
+    def test_rootfs_build_leaves_no_log_of_when_it_ran(self):
+        # A log line is content, not metadata, so nothing the image build does
+        # afterwards can pin it: two builds of one commit would ship different
+        # bytes in /var/log for the same package set.
+        # Joined first, so that a line continuation in the script is not read
+        # as a path that is missing from the command that follows it.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text().replace('\\\n', ' ')
+        for log in ('/var/log/dpkg.log', '/var/log/alternatives.log',
+                    '/var/log/bootstrap.log', '/var/log/apt/*'):
+            with self.subTest(log=log):
+                self.assertRegex(text, rf'rm -f [^\n]*{re.escape(log)}')
+
+    def test_host_dependencies_cover_the_image_tools(self):
+        # dosfstools, e2fsprogs and util-linux are what make, check and rewrite
+        # the two filesystems; the runner image is not a dependency.
+        text = (ROOT / '.github/workflows/build.yml').read_text()
+        for package in ('dosfstools', 'e2fsprogs', 'util-linux'):
+            with self.subTest(package=package):
+                self.assertIn(f' {package} ', text.replace('\n', ' '))
+        # The host check is what a local build runs before it starts; without
+        # these the image build dies at its own required-command loop, once the
+        # kernel and the rootfs have already been built.
+        host_check = (ROOT / 'scripts/host-check.sh').read_text()
+        for command in ('mkfs.vfat', 'mkfs.ext4', 'debugfs', 'dumpe2fs',
+                        'e2fsck', 'fsck.fat', 'tune2fs'):
+            with self.subTest(command=command):
+                self.assertRegex(host_check, rf'\b{re.escape(command)}\b')
+
     def test_gpu_package_pins_before_it_archives(self):
         # The helper only exports the environment, so it has to run before
         # dpkg-deb reads it; behind the --build call the package would quietly
@@ -272,6 +312,174 @@ class BuildWiring(unittest.TestCase):
         text = (ROOT / 'scripts/build-gpu-package.sh').read_text()
         self.assertLess(text.index('\npin_build_timestamps\n'),
                         text.index('dpkg-deb --build'))
+
+
+class ImageIdentifiers(unittest.TestCase):
+    """The identifiers every build of a board has to derive to the same value.
+
+    They become the PARTUUIDs the bootloader and /etc/fstab point at and the
+    UUID and hash seed the ext4 metadata is derived from, so a change here
+    changes what a board boots from - and the two boards sharing one would be
+    worse than either.  The expected values are frozen rather than recomputed:
+    a test that derives them the way the script does would agree with any
+    mistake the script made.
+    """
+
+    GOLDEN = {
+        'mars': '4f50b104-904a-54eb-813d-a6fa7ed6fb59 '
+                'a82a8ddd-8e0b-54f1-a217-a828db826193 '
+                'c0786468-5a8a-569f-99ac-db6db141c3b3 '
+                '96cf9a91-fce5-5dbf-83d8-6040ee743c14 '
+                'de3ddb45-a951-527d-96b8-99ac7d7c2764 ec6fecc3',
+        'visionfive2': '3da50bd0-18dc-5716-ae0c-ed1be9d087c5 '
+                       '660db473-ec26-5a02-afe4-c6447c6e878d '
+                       '895e482b-4426-5fd1-93a3-1f80bc729d33 '
+                       'cf172299-ea24-59e5-8400-85dd9ee6c811 '
+                       '58b4ec72-df7f-517c-927e-b17148094488 841a7137',
+    }
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.script = Path(self.temp.name) / 'image-identifiers.py'
+        self.script.write_text(heredoc_body('scripts/build-image.sh', 'image-identifiers'))
+
+    def derive(self, board):
+        result = subprocess.run([sys.executable, str(self.script), board],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_each_board_derives_the_frozen_identifiers(self):
+        for board, expected in self.GOLDEN.items():
+            with self.subTest(board=board):
+                self.assertEqual(self.derive(board), expected)
+
+    def test_the_boards_share_no_identifier(self):
+        mars = self.derive('mars').split()
+        visionfive2 = self.derive('visionfive2').split()
+        self.assertEqual(len(mars), len(visionfive2))
+        self.assertFalse(set(mars) & set(visionfive2),
+                         'the two boards would answer to the same PARTUUIDs')
+
+
+class ImageNormalisation(unittest.TestCase):
+    """The passes that make the finished image a function of the commit.
+
+    Every one of them is a raw write into a filesystem the script has just
+    unmounted, and each is followed by a read-back that goes to the offsets the
+    on-disk format defines rather than to the tool that wrote them - debugfs
+    reports a field it did not accept on its opening line and carries on, so its
+    status says nothing.  What is pinned here is the wiring: which pass exists,
+    what it runs against, and in which order.
+    """
+
+    def setUp(self):
+        self.text = (ROOT / 'scripts/build-image.sh').read_text()
+
+    def pass_body(self, marker):
+        return heredoc_body('scripts/build-image.sh', marker)
+
+    def test_every_pass_is_a_python_heredoc_that_parses(self):
+        # These run inside scripts/build-image.sh, which no test executes;
+        # a syntax error there is a build that dies after it has already
+        # partitioned a loop device.
+        for marker in ('image-identifiers', 'esp-times', 'inode-times',
+                       'superblock-times', 'inode-times-check'):
+            with self.subTest(marker=marker):
+                compile(self.pass_body(marker), marker, 'exec')
+
+    def test_the_epoch_reaches_the_tools_that_take_a_fake_time(self):
+        # mke2fs and debugfs read E2FSPROGS_FAKE_TIME first: without it, the
+        # flush debugfs performs when it closes the filesystem puts the wall
+        # clock back into s_wtime after the pass has written it.
+        self.assertIn('export E2FSPROGS_FAKE_TIME="$SOURCE_DATE_EPOCH"', self.text)
+
+    def test_the_inode_pass_runs_before_the_superblock_pass(self):
+        # The superblock pass has to be the last writer: it is the one that
+        # leaves s_wtime holding the epoch.
+        self.assertLess(self.text.index('# inode-times\n'),
+                        self.text.index('# superblock-times'))
+
+    def test_wtime_is_written_last_of_the_superblock_times(self):
+        self.assertIn('for field in mkfs_time lastcheck mtime first_error_time '
+                      'last_error_time wtime; do', self.text)
+
+    def test_the_inode_pass_is_not_read_through_a_pipe(self):
+        # debugfs echoes every command, and a reader that closes early - head -
+        # kills it with SIGPIPE part way through the writes.  Its output goes to
+        # the null device instead, and the read-back is the check.
+        for line in self.text.splitlines():
+            if line.startswith('debugfs ') and 'inode_commands' in line:
+                self.assertIn('> /dev/null', line)
+                self.assertNotIn('|', line)
+                break
+        else:
+            self.fail('the inode pass no longer runs debugfs')
+
+    def test_the_commands_the_image_build_needs_are_required_up_front(self):
+        # The list is the gate, not the file: a command that appears somewhere
+        # in the script but is missing from the loop fails the build after it
+        # has partitioned a loop device, and a whole-file search cannot tell
+        # the two apart.
+        for line in self.text.splitlines():
+            if line.startswith('for command_name in '):
+                self.assertTrue(line.endswith('; do'), line)
+                required = line.split(' in ', 1)[1].split(';')[0].split()
+                break
+        else:
+            self.fail('the image build no longer requires its commands up front')
+        for command in ('sfdisk', 'losetup', 'mkfs.vfat', 'mkfs.ext4', 'mount',
+                        'umount', 'blkid', 'rsync', 'python3', 'debugfs',
+                        'dumpe2fs', 'e2fsck', 'fsck.fat', 'tune2fs'):
+            with self.subTest(command=command):
+                self.assertIn(command, required)
+
+    def test_the_boot_filesystem_is_made_from_pinned_values(self):
+        self.assertIn('mkfs.vfat --invariant -i "$esp_serial" -n "$BOOT_PARTITION_LABEL"',
+                      self.text)
+        self.assertIn('mkfs.ext4 -L "$ROOT_PARTITION_LABEL" -U "$rootfs_uuid"', self.text)
+        self.assertIn('-E hash_seed="$hash_seed"', self.text)
+
+    def test_both_free_cluster_summaries_are_written(self):
+        # mkfs.fat writes the boot sector and the free-cluster summary twice,
+        # the second pair starting at BPB_BkBootSec.  dosfsck reads the first
+        # and nothing else looks at the second, so an image built before this
+        # shipped the count from the empty filesystem beside a current one, and
+        # a repair tool falling back to the copy would take the stale number.
+        body = self.pass_body('esp-times')
+        self.assertIn('boot, 0x32', body)
+        self.assertIn('summaries.append(backup_boot + fsinfo_sector)', body)
+        self.assertEqual(body.count('for sector in summaries:'), 2,
+                         'the summary has to be written and read back')
+
+    def test_the_journal_is_created_after_the_rootfs_is_copied_in(self):
+        # A journaled mount fills the journal's ring buffer with the
+        # transactions it committed - inode table blocks and superblocks
+        # carrying the wall clock of the run - and a clean unmount leaves them
+        # there: jbd2 writes s_start = 0 into the journal superblock and
+        # nothing else.  No pass below can reach that area, so the filesystem
+        # is made without a journal and tune2fs adds one to the populated,
+        # normalised filesystem instead.
+        self.assertIn('-O ^has_journal "$root_device"', self.text)
+        self.assertIn('mount "$root_device" "$root_mount"', self.text)
+        self.assertIn('tune2fs -O has_journal "$root_device"', self.text)
+        journal = self.text.index('tune2fs -O has_journal')
+        self.assertLess(self.text.index('umount "$root_mount"\n'), journal)
+        # tune2fs writes the copies of the superblock in the other block groups
+        # from the primary, so it belongs after the pass that pins the primary
+        # and before the read-back that checks those copies.
+        self.assertLess(self.text.index('for field in mkfs_time lastcheck'), journal)
+        self.assertLess(journal, self.text.index('# superblock-times'))
+
+    def test_nothing_is_written_to_either_device_before_they_are_unmounted(self):
+        # The trap in cleanup() unmounts as well and comes first in the file,
+        # so anchoring on the line that ends there is what tells the pass
+        # ordering from the way out of a failed build.
+        unmounted = self.text.index('umount "$root_mount"\n')
+        for marker in ('# esp-times', '# inode-times', '# superblock-times'):
+            with self.subTest(marker=marker):
+                self.assertLess(unmounted, self.text.index(marker))
 
 
 if __name__ == '__main__':

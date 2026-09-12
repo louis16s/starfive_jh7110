@@ -257,6 +257,78 @@ package. Two boards packaging a byte-identical vendor payload otherwise
 produced `.deb` files that differed in the archive metadata alone - the same
 files, the same sizes, 14 bytes and 11 seconds apart.
 
+The image needs the same treatment at a level the payload builds never reach,
+because a partition table and two filesystems carry times and identifiers of
+their own. `scripts/build-image.sh` derives all of them from the board name
+through `uuid5` over a reserved `.invalid` name, so the disk label, both
+partition GUIDs, the FAT volume serial, the ext4 UUID and its directory hash
+seed are one value per board on every build, and no two boards share one. sfdisk
+is given named fields rather than positional ones - the fourth positional field
+is the boot flag, and every slot sfdisk fills in itself comes out with a GUID
+generated for that run - `mkfs.vfat` is called with `--invariant` and the pinned
+serial, and `mkfs.ext4` with the UUID and the hash seed, without which the htree
+directory checksums, and so the image, would be derived from a random value mkfs
+picked.
+
+Between partitioning and the finished image the two filesystems are mounted,
+populated and unmounted, and that is where the values a build cannot choose come
+from. The kernel stamps the superblock's `s_mtime`, `s_wtime` and `s_lastcheck`
+when it releases a filesystem, counts what was written to it, and `ext4_new_inode`
+fills every new inode's `i_generation` from `get_random_u32` - a field no
+userspace interface exposes. The root filesystem is therefore made without a
+journal and one is added after the passes with `tune2fs`: a journaled mount
+copies every transaction it commits - inode table blocks and superblocks,
+carrying the wall clock of the run - into the journal's ring buffer, and a clean
+unmount does not clear that area. `jbd2` writes `s_start = 0` into the journal
+superblock and leaves the transactions where they are, which is how forensic
+tools recover deleted content from one, and none of the passes below can reach
+it. A journal `tune2fs` creates over blocks that were still free has nothing to
+replay and holds the zeros the image file was made with.
+
+The passes that run after both devices are unmounted therefore write the
+metadata directly. Every directory entry in the FAT partition is stamped with the
+epoch in UTC, LFN entries excluded because their `0x0D` byte is a checksum rather
+than a time, and both FSInfo free-cluster summaries are recomputed from the FAT
+- `mkfs.fat` writes the boot sector and that summary twice, and an image built
+before this had updated only the first, so the copy at `BPB_BkBootSec` held the
+count from the empty filesystem next to a current one. Every allocated inode gets the epoch in all four of its time fields and
+zeros in the four nanosecond halves and in `i_generation`. The superblock's six
+time fields and its write counter are written last, `s_wtime` after everything
+else, because debugfs restamps that one as it closes a filesystem it has
+written; the `tune2fs` call that follows writes the epoch into it too, from
+`E2FSPROGS_FAKE_TIME`, so the last writer of the superblock is still the pinned
+clock. The mount count is left as the kernel left it, since both builds mount
+the root filesystem exactly once.
+
+Each of those writes is followed by a read-back that does not trust the tool
+that made it, because debugfs prints its complaint about a field it did not
+accept on its opening line and then runs the next command, so its status says
+nothing about whether the write took - `@1789212458` in front of a nanosecond
+field is refused exactly that way, with the value left as it was. The read-backs
+parse the superblock at the offsets the on-disk format defines, walk the inode
+tables through the group descriptors and require the walk to find as many inodes
+in use as the superblock's free-inode count leaves, and check every allocated
+inode, every unused one (which has to be empty: a deletion would leave an
+`i_dtime` the commit cannot produce), every copy of the superblock in the later
+block groups - and the superblock for the journal inode `tune2fs` created, which
+is the one thing here that e2fsck would not miss if it were absent. Those
+copies are written by mkfs and then by `tune2fs`, which propagates the primary
+into them; the kernel never writes them, because `ext4_commit_super` writes the
+primary and nothing else. A build that pinned the primary alone would therefore
+still ship the clock of the machine that made the image, in a block no tool of
+ours reads. That is why `tune2fs` runs where it does, between the writes and the
+read-back: before them it would propagate the times the passes replace, and
+after them it would propagate unverified.
+
+What the two identical CI runs of one commit are for is the part that cannot be
+reproduced on a development host: the order a real kernel allocates inodes and
+directory entries at scale, and the handful of files a rootfs build inherits
+from the host it ran on - `/etc/resolv.conf` among them, which debootstrap and
+mmdebstrap alike copy in so that the chroot can reach its mirror, and which the
+board's NetworkManager overwrites at first boot. The journal used to be on that
+list; it is not any more, because a build that never journals the filesystem has
+no transactions of its own to leave behind.
+
 One artifact group stays outside that guarantee: the kernel's Debian packages.
 `scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which
 ignores `SOURCE_DATE_EPOCH` and takes the packaging time, so the `.deb` files -

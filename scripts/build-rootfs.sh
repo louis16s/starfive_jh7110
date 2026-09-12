@@ -14,6 +14,16 @@ board=$1
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
+# shellcheck source=lib/build-timestamps.sh
+source "$REPO_ROOT/scripts/lib/build-timestamps.sh"
+
+# The rootfs is where the image's file times come from: dpkg unpacks each
+# package with the times the archive recorded, and the chroot then runs tools
+# that stamp the moment they ran.  The image build normalises the inodes it
+# creates from this tree, so what matters here is that the times are a function
+# of the commit rather than of the runner - and that the chroot sees the same
+# epoch, which is why it is passed into the environment below.
+pin_build_timestamps
 
 command -v mmdebstrap >/dev/null 2>&1 || die "mmdebstrap is required on the Linux build host"
 command -v qemu-riscv64-static >/dev/null 2>&1 || die "qemu-riscv64-static is required for riscv64 customization"
@@ -140,6 +150,7 @@ fi
 chroot "$rootfs_dir" /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
     DEFAULT_LOCALE="$DEFAULT_LOCALE" DEFAULT_LANGUAGE="$DEFAULT_LANGUAGE" \
     SUPPORTED_LOCALES="$SUPPORTED_LOCALES" DEFAULT_USER="$DEFAULT_USER" \
     GPU_DEB_NAME="$gpu_deb_name" \
@@ -215,6 +226,16 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # regression fails the build instead of the first boot of the board.
         test -s /etc/vulkan/icd.d/icdconf.json
         test -s /usr/lib/libVK_IMG.so
+        # These carry the identities and the clock of the machine that built the
+        # image rather than anything the image is meant to have: dpkg and apt log
+        # each step with the time it ran, and the machine id and host keys are
+        # per-installation secrets.  The image build pins the metadata of every
+        # inode it writes, but a log line is content and no pass can reach it, so
+        # the files are removed here - systemd and the first-boot unit create
+        # both identities on the board, where they belong.
+        rm -f /var/log/dpkg.log /var/log/dpkg.log.* /var/log/alternatives.log \
+            /var/log/alternatives.log.* /var/log/bootstrap.log
+        rm -f /var/log/apt/*
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
         apt-get clean

@@ -131,8 +131,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             bc bison binfmt-support build-essential ccache cifs-utils \
-            debhelper debhelper-compat device-tree-compiler dosfstools dwarves flex gdisk \
-            debian-archive-keyring \
+            debhelper debhelper-compat device-tree-compiler dosfstools dwarves \
+            e2fsprogs flex gdisk debian-archive-keyring \
             initramfs-tools libelf-dev libgnutls28-dev libncurses-dev libssl-dev \
             mmdebstrap mount qemu-user-static rsync shellcheck \
             gcc-riscv64-linux-gnu python3-yaml swig u-boot-tools \
