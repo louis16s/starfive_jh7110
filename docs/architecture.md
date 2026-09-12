@@ -231,7 +231,7 @@ GitHub Actions will use an x86_64 Ubuntu runner and cache source archives, ccach
 * license gate result;
 * build logs and artifact SHA-256.
 
-Both payload builds are timestamp-pinned, so two builds of the same commit
+Every payload build is timestamp-pinned, so two builds of the same commit
 produce identical bytes and a published digest can be checked by rebuilding it
 rather than by trusting the manifest. `scripts/lib/build-timestamps.sh` derives
 `SOURCE_DATE_EPOCH` from the commit date — the same value the manifest records
@@ -247,6 +247,15 @@ rewrite is an in-place, size-preserving four-byte overwrite — the FIT's image
 data follows the device tree, so repacking the blob the way `fdtput` does would
 move that data and invalidate every data-offset in the file — and it refuses to
 write unless exactly those four bytes change.
+
+The packages need the same value for a different reason: `dpkg-deb` stamps its
+`ar` members with the packaging time, and a staged file newer than
+`SOURCE_DATE_EPOCH` is archived with that time as well, so
+`scripts/build-gpu-package.sh` pins the environment before it creates the
+directories, the maintainer scripts and the systemd symlink that go into the
+package. Two boards packaging a byte-identical vendor payload otherwise
+produced `.deb` files that differed in the archive metadata alone - the same
+files, the same sizes, 14 bytes and 11 seconds apart.
 
 One artifact group stays outside that guarantee: the kernel's Debian packages.
 `scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which

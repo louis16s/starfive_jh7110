@@ -234,8 +234,11 @@ class PinnedTimestamps(unittest.TestCase):
 class BuildWiring(unittest.TestCase):
     """The scripts that have to use those values, and the checks around them."""
 
-    def test_payload_builds_pin_their_timestamps(self):
-        for script in ('scripts/build-uboot.sh', 'scripts/build-kernel.sh'):
+    def test_build_scripts_pin_their_timestamps(self):
+        # The GPU package too: it is assembled entirely from files whose mtimes
+        # are either the vendor's or the packaging run's.
+        for script in ('scripts/build-uboot.sh', 'scripts/build-kernel.sh',
+                       'scripts/build-gpu-package.sh'):
             with self.subTest(script=script):
                 text = (ROOT / script).read_text()
                 self.assertIn('source "$REPO_ROOT/scripts/lib/build-timestamps.sh"', text)
@@ -261,6 +264,14 @@ class BuildWiring(unittest.TestCase):
         # otherwise be shipped even though /etc already provides it.
         text = (ROOT / 'scripts/build-gpu-package.sh').read_text()
         self.assertIn('find "$stage_dir/etc/init.d" -depth -type d -empty -delete', text)
+
+    def test_gpu_package_pins_before_it_archives(self):
+        # The helper only exports the environment, so it has to run before
+        # dpkg-deb reads it; behind the --build call the package would quietly
+        # go back to packaging-time stamps on both boards.
+        text = (ROOT / 'scripts/build-gpu-package.sh').read_text()
+        self.assertLess(text.index('\npin_build_timestamps\n'),
+                        text.index('dpkg-deb --build'))
 
 
 if __name__ == '__main__':

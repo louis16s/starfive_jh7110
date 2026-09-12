@@ -14,6 +14,8 @@ board=$1
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
+# shellcheck source=lib/build-timestamps.sh
+source "$REPO_ROOT/scripts/lib/build-timestamps.sh"
 
 for command_name in curl dpkg-deb md5sum python3 rsync sha256sum tar; do
     command -v "$command_name" >/dev/null 2>&1 \
@@ -101,6 +103,14 @@ for firmware_pattern in 'rgx.fw.*' 'rgx.sh.*'; do
         -name "$firmware_pattern" -size +0c -print -quit)
     [[ -n "$firmware" ]] || die "PVR archive is missing non-empty $firmware_pattern"
 done
+
+# Nothing else stamps this package.  dpkg-deb takes the packaging time for its
+# ar members, and keeping SOURCE_DATE_EPOCH unset would leave the directories,
+# the maintainer scripts and the systemd symlink created below newer than that
+# epoch, so it also ships them with the packaging time.  Two boards packaging a
+# byte-identical vendor payload therefore produced .deb files 14 bytes and 11
+# seconds apart.
+pin_build_timestamps
 
 install -d -m 0755 \
     "$stage_dir/DEBIAN" \
