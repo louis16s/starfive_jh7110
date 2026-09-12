@@ -190,7 +190,12 @@ U-Boot、OpenSBI 和板级启动介质配置必须按板型区分。当前配置
 - 启动方式：OpenSBI + U-Boot + extlinux.conf
 - /boot：内核、initrd、DTB 和 extlinux 配置
 
-启动介质、SPI-NOR 写入、UART 接线和板级差异目前请参阅 docs/build.md、docs/architecture.md、docs/research.md 和 docs/graphics.md。对应的详细板级启动文档仍待补充；在此之前应先通过串口确认 U-Boot 环境，不要盲目写入另一块板的 bootloader。
+启动介质、SPI-NOR 写入、UART 接线和板级差异请参阅
+[构建与启动文档](docs/build.md)、[架构说明](docs/architecture.md)、
+[研究记录](docs/research.md) 和 [图形说明](docs/graphics.md)。Mars 的 SPI-NOR
+必须使用成对的 SPL 与 FIT payload：SPL 写入 `0x0`，`u-boot.itb` 写入
+`0x100000`；不要把同目录的 `u-boot.img` 当作第二阶段 payload。刷写前先通过
+串口确认板型和 U-Boot 环境，不要把 VisionFive 2 的 bootloader 或 DTB 写入 Mars。
 
 ## HDMI、GPU 和 VPU 状态
 

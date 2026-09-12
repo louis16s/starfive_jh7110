@@ -44,6 +44,30 @@ The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debia
 
 Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
 
+The JH7110 SPI-NOR boot chain has two separate files. The SPL file is
+`u-boot/spl/u-boot-spl.bin.normal.out` and is written at offset `0x0`; the
+second-stage payload is `u-boot/u-boot.itb` and is written at offset
+`0x100000`. `u-boot.img`/`u-boot-dtb.img` are legacy U-Boot outputs and must
+not be flashed as the Mars SPI payload. The build now fails if the FIT
+payload is missing or invalid and CI publishes `u-boot.itb` explicitly.
+
+From an already booted Mars Linux system, use the board's MTD partitions:
+
+```sh
+sudo apt install mtd-utils
+cat /proc/mtd
+sudo flashcp -v mars_u-boot-spl.bin.normal.out /dev/mtd0
+sudo flashcp -v mars_visionfive2_fw_payload.img /dev/mtd1
+```
+
+The two official `mars_*` files above are the vendor recovery/update pair.
+For this project's build, use the locked project SPL and `u-boot.itb` pair,
+then reset the saved U-Boot environment with `env default -f -a` and
+`env save`. If SPI boot is already damaged, follow the official Mars UART
+recovery procedure and hold the Mars upgrade key while powering the board;
+the serial port must show the XMODEM `CCCC` prompt before sending the SPL.
+Do not use a VisionFive 2 bootloader or DTB on Mars.
+
 ## Phase 4 Debian rootfs
 
 The rootfs builder uses the Debian Trixie snapshot recorded in `configs/common.conf` and installs the same package manifests for both boards. Board identity is written separately to `/etc/jh7110/board.conf`; no VisionFive 2 DTB or board-specific rootfs is reused for Mars.
