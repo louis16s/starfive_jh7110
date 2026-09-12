@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=JH7110 Board Information
+Name[zh_CN]=JH7110 板卡信息
+Comment=What this board is, and the commands worth knowing
+Comment[zh_CN]=这块板卡的信息，以及值得知道的命令
+# Terminal=true because the command prints; there is no window to open, and a
+# menu entry that silently did nothing would be worse than no entry at all.
+Exec=/usr/bin/jh7110-welcome
+Terminal=true
+Categories=System;Settings;
+Keywords=jh7110;riscv;board;mars;visionfive;

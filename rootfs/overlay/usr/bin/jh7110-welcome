@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# What a new board says to the person who just finished setting it up.
+#
+# The setup wizard ends by starting the desktop, and the first login is the
+# only moment when somebody is looking for what to do next.  This is that: what
+# the machine is, how the account model works, and the four commands that are
+# worth knowing.  It prints; it changes nothing.
+#
+#     jh7110-welcome
+set -Eeuo pipefail
+
+readonly PROGRAM=jh7110-welcome
+readonly BOARD_CONFIG=/etc/jh7110/board.conf
+readonly STATE_DIR=${JH7110_STATE_DIR:-/var/lib/jh7110}
+readonly REPOSITORY=https://github.com/louis16s/starfive_jh7110
+
+board_name=unknown
+board_id=unknown
+if [[ -r "$BOARD_CONFIG" ]]; then
+    # shellcheck source=/dev/null
+    board_id=$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${BOARD_ID:-unknown}"' _ "$BOARD_CONFIG")
+    # shellcheck source=/dev/null
+    board_name=$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${BOARD_NAME:-unknown}"' _ "$BOARD_CONFIG")
+fi
+readonly board_id board_name
+
+printf '\n%s\n' "$board_name (JH7110, $board_id)"
+printf '%s\n\n' "$(printf '=%.0s' $(seq 1 $(( ${#board_name} + 20 ))))"
+
+printf 'Your account is an administrator.  Root has no password and cannot be\n'
+printf 'logged into: everything that needs more than your account goes through\n'
+printf 'sudo, which is also why nothing here asks you for a root password.\n\n'
+
+printf 'Worth knowing\n'
+printf '  jh7110-info            what this board is: display, GPU, memory, thermals\n'
+printf '  jh7110-diagnostics     collect a report to attach to a bug report;\n'
+printf '                         passwords and keys are filtered out of it\n'
+printf '  jh7110-test-graphics   whether hardware acceleration actually works\n'
+printf '  sudo jh7110-oobe --reset\n'
+printf '                         run the setup again from the next login\n\n'
+
+if [[ -r "$STATE_DIR/oobe-state.json" ]]; then
+    printf 'The setup recorded what it did in %s/oobe-state.json.\n' "$STATE_DIR"
+    printf 'The report it took of the hardware is in %s/hardware.json.\n\n' "$STATE_DIR"
+fi
+
+printf 'Project and documentation: %s\n' "$REPOSITORY"
+printf 'Board notes, including what is known not to work, are in docs/ there.\n\n'
