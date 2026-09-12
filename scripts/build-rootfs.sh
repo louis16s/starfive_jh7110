@@ -313,6 +313,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         test -x /usr/bin/jh7110-oobe
         test -x /usr/bin/jh7110-diagnostics
         test -x /usr/bin/jh7110-welcome
+        # Two helpers live in /usr/libexec because the system runs them, and
+        # they are also the two a person types by hand when the desktop does
+        # not come up: the recovery setup and the machine preparation.  What
+        # the README and the wizard print has to be a command that exists on
+        # the path a person has, so the names are shipped as well.
+        test -x /usr/bin/jh7110-console-setup
+        test -x /usr/bin/jh7110-prepare
         # The wizard runs as lightdm inside the greeter session and appends to
         # this file.  /var/log belongs to root, so without a file that is
         # already there and already owned by lightdm, every line the wizard

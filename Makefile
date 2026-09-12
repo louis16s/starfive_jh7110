@@ -33,6 +33,7 @@ check:
 	python3 tests/test-board-info.py
 	python3 tests/test-release-assets.py
 	python3 tests/test-shipped-python.py
+	python3 tests/test-documented-commands.py
 	./scripts/validate-profile.sh "$(BOARD)"
 	./scripts/host-check.sh
 	./scripts/verify-source-lock.sh
