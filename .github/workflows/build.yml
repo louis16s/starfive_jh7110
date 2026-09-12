@@ -13,7 +13,11 @@ on:
           - visionfive2
           - mars
       build_type:
-        description: Build profile
+        # Naming only: it selects the artifact name and is recorded in
+        # build-manifest.txt.  It does not change compiler flags - the build
+        # scripts strip BUILD_TYPE from the environment they hand to make, and
+        # the kernel/rootfs/image outputs are identical either way.
+        description: Build profile (artifact naming only, not compiler flags)
         required: true
         default: release
         type: choice
@@ -23,7 +27,9 @@ on:
       publish_release:
         description: Publish a GitHub Release after a successful release build
         required: true
-        default: true
+        # A dispatch is normally "build this branch", not "cut a release".
+        # Publishing moves and uploads assets, so it has to be asked for.
+        default: false
         type: boolean
   workflow_call:
     inputs:
@@ -43,9 +49,47 @@ on:
 permissions:
   contents: read
 
+# Image builds run for the better part of an hour and can publish a release, so
+# runs queue instead of cancelling each other mid-publish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    name: Validate build inputs
+    runs-on: ubuntu-24.04
+    steps:
+      # workflow_dispatch constrains board to a choice list, but workflow_call
+      # passes a free-form string.  An unknown board used to fall through the
+      # matrix ternary to "build both boards", while every step guarded by
+      # `inputs.board == matrix.board` evaluated false - the job finished green
+      # having produced nothing.  Fail here instead.
+      - name: Validate board and build type
+        env:
+          BOARD: ${{ inputs.board }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -Eeuo pipefail
+          case "$BOARD" in
+            all|visionfive2|mars) ;;
+            *)
+              echo "unsupported board: '$BOARD' (expected all, visionfive2 or mars)" >&2
+              exit 1
+              ;;
+          esac
+          case "${BUILD_TYPE:-release}" in
+            release|debug) ;;
+            *)
+              echo "unsupported build type: '$BUILD_TYPE' (expected release or debug)" >&2
+              exit 1
+              ;;
+          esac
+          echo "building board=$BOARD build_type=${BUILD_TYPE:-release}"
+
   build:
     name: ${{ matrix.board }}
+    needs: preflight
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -74,9 +118,13 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # The board belongs in the key: the two matrix jobs run concurrently
+          # and would otherwise compute one identical key, so whichever saved
+          # second lost the race and failed, and each board restored the other
+          # board's compiler cache.
+          key: ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ matrix.board }}-${{ inputs.build_type }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ inputs.build_type }}-
+            ubuntu-24.04-${{ runner.arch }}-ccache-v1-${{ matrix.board }}-${{ inputs.build_type }}-
 
       - name: Install host dependencies
         run: |
@@ -94,15 +142,12 @@ jobs:
           ccache --show-config
 
       - name: Validate profile and lock
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" check
 
       - name: Run shellcheck
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
-        run: shellcheck --severity=error scripts/*.sh build.sh packages/gpu/postinst packages/gpu/initramfs-hook board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror
+        run: shellcheck --severity=error scripts/*.sh build.sh packages/gpu/postinst packages/gpu/initramfs-hook board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-info rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror
 
       - name: Fetch locked BSP sources
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" fetch
 
       - name: Restore locked PVR payload cache
@@ -121,7 +166,6 @@ jobs:
 
       - name: Build OpenSBI, U-Boot and kernel packages
         id: compile
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" opensbi
           make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" uboot
@@ -147,15 +191,12 @@ jobs:
           key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Build Debian Trixie rootfs
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" rootfs
 
       - name: Install kernel package and generate initrd
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" install-kernel
 
       - name: Stage selected board DTB
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           set -Eeuo pipefail
           case "${{ matrix.board }}" in
@@ -170,14 +211,12 @@ jobs:
             "$release_dir/$kernel_dtb"
 
       - name: Assemble and package image
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         run: |
           sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" image
           sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" compress
           sudo make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" manifest
 
       - name: Upload build artifacts
-        if: github.event_name != 'workflow_dispatch' || inputs.board == 'all' || inputs.board == matrix.board
         uses: actions/upload-artifact@v6
         with:
           name: jh7110-desktop-${{ matrix.board }}-${{ env.BUILD_TYPE }}
@@ -235,6 +274,43 @@ jobs:
             done < <(find "$root" -type f -print0)
           done
 
+      # The action rejects the whole release when any single pattern matches
+      # nothing, and a board-specific run has no files for the other board, so
+      # a fixed two-board glob list cannot use fail_on_unmatched_files.  List
+      # the downloaded files by path instead: every entry exists by
+      # construction, which makes the strict check a real safety net for the
+      # empty-release case it is meant to catch.
+      - name: Determine release assets
+        id: patterns
+        env:
+          BOARD: ${{ inputs.board }}
+        run: |
+          set -Eeuo pipefail
+          case "$BOARD" in
+            all) boards=(visionfive2 mars) ;;
+            visionfive2|mars) boards=("$BOARD") ;;
+            *)
+              echo "unsupported board: '$BOARD'" >&2
+              exit 1
+              ;;
+          esac
+          files=()
+          for board in "${boards[@]}"; do
+            [[ -d "release/$board" ]] || continue
+            while IFS= read -r -d '' file; do
+              files+=("$file")
+            done < <(find "release/$board" -type f -print0 | sort -z)
+          done
+          (( ${#files[@]} )) || {
+            echo "no release assets were downloaded for board $BOARD" >&2
+            exit 1
+          }
+          {
+            echo 'files<<RELEASE_ASSETS'
+            printf '%s\n' "${files[@]}"
+            echo 'RELEASE_ASSETS'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish automatic GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:
@@ -243,22 +319,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           prerelease: false
-          files: |
-            release/visionfive2/**/*.img.xz
-            release/visionfive2/**/*.sha256
-            release/visionfive2/**/*.deb
-            release/visionfive2/**/*.bin
-            release/visionfive2/**/*.itb
-            release/visionfive2/**/*.normal.out
-            release/visionfive2/**/*.img
-            release/visionfive2/**/*.dtb
-            release/visionfive2/**/*build-manifest.txt
-            release/mars/**/*.img.xz
-            release/mars/**/*.sha256
-            release/mars/**/*.deb
-            release/mars/**/*.bin
-            release/mars/**/*.itb
-            release/mars/**/*.normal.out
-            release/mars/**/*.img
-            release/mars/**/*.dtb
-            release/mars/**/*build-manifest.txt
+          fail_on_unmatched_files: true
+          files: ${{ steps.patterns.outputs.files }}

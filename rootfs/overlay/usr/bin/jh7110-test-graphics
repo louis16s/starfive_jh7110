@@ -56,8 +56,20 @@ fi
 probe() {
     local label=$1
     shift
-    if ! command -v "$1" >/dev/null 2>&1; then
-        printf 'FAIL %s: 未安装 %s\n' "$label" "$1"
+    # The Vulkan probe is invoked as `env VAR=value ... vulkaninfo`, so the
+    # command whose presence matters is the first argument that is neither an
+    # assignment nor the env wrapper.  Checking `env` instead would report a
+    # missing vulkaninfo as a failing GPU.
+    local command_name= argument
+    for argument in "$@"; do
+        case "$argument" in
+            *=*) continue ;;
+            env) continue ;;
+            *) command_name=$argument; break ;;
+        esac
+    done
+    if [[ -z "$command_name" ]] || ! command -v "$command_name" >/dev/null 2>&1; then
+        printf 'FAIL %s: 未安装 %s\n' "$label" "${command_name:-<command>}"
         failures=$((failures + 1))
         return
     fi
@@ -65,10 +77,27 @@ probe() {
     if result=$(timeout 30 "$@" 2>&1); then
         printf '%s\n' "$result"
         case "$label" in
-            Vulkan|OpenGL|EGL)
+            # Vulkan 是这块板子上唯一的硬件加速证据：IMG ICD 只选择厂商
+            # 驱动，所以软件渲染器在这里就是 GPU 不工作。
+            Vulkan)
                 if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
                     printf 'FAIL %s: 发现软件渲染器，不能确认硬件加速通过\n' "$label"
                     failures=$((failures + 1))
+                elif ! grep -Eiq 'powervr|img[ -]?bxe|rogue|img technologies' <<<"$result"; then
+                    printf 'FAIL %s: 没有 PowerVR renderer/device 证据\n' "$label"
+                    failures=$((failures + 1))
+                else
+                    printf 'PASS %s: 发现 PowerVR 设备\n' "$label"
+                fi
+                ;;
+            # X11 走 modesetting 且镜像默认 AccelMethod=none
+            # （/etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf），所以 GLX 与
+            # EGL 报软件渲染是设计结果，不是 GPU 故障：既不能报 PASS，也不该
+            # 让整份诊断返回失败。硬件加速由上面的 Vulkan 结果负责证明。
+            OpenGL|EGL)
+                if grep -Eiq 'llvmpipe|softpipe|lavapipe|software rasterizer' <<<"$result"; then
+                    printf 'WARN %s: 软件渲染是 X11/modesetting 的默认路径，不算 GPU 加速；请以 Vulkan 结果为准\n' "$label"
+                    warnings=$((warnings + 1))
                 elif ! grep -Eiq 'powervr|img[ -]?bxe|rogue|img technologies' <<<"$result"; then
                     printf 'FAIL %s: 没有 PowerVR renderer/device 证据\n' "$label"
                     failures=$((failures + 1))
@@ -127,8 +156,10 @@ if [[ -n "${DISPLAY:-}" ]]; then
     probe OpenGL glxinfo -B
     probe Display xrandr --current
 else
-    printf 'SKIP: X11 检测需要在桌面终端执行\n'
-    failures=$((failures + 1))
+    # 没有 DISPLAY（例如串口或 SSH 会话）时这项检查无从执行。它不是硬件
+    # 能力缺失，报成失败会让整份诊断在没有桌面会话时恒定返回非零。
+    printf 'WARN: 未设置 DISPLAY，跳过 X11 检测；请在桌面终端重新运行\n'
+    warnings=$((warnings + 1))
 fi
 if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
     probe EGL eglinfo -B

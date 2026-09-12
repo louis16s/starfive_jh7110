@@ -37,9 +37,29 @@ kernel_make() {
 }
 
 kernel_make "$KERNEL_DEFCONFIG"
+kernel_config="$kernel_source/scripts/config"
 for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV; do
-    "$kernel_source/scripts/config" --file "$output_dir/.config" --enable "$symbol"
+    "$kernel_config" --file "$output_dir/.config" --enable "$symbol"
 done
+# Debian userspace expects seccomp: systemd's SystemCallFilter= sandboxing and
+# the browser sandboxes are unavailable without it.  The BSP defconfig disables
+# it (CONFIG_EXPERT is set), so it has to be turned back on here.
+"$kernel_config" --file "$output_dir/.config" --enable SECCOMP
+"$kernel_config" --file "$output_dir/.config" --enable SECCOMP_FILTER
+# The tick rate and the default cpufreq governor are what a desktop feels.
+# 100 Hz quantizes scheduling decisions to 10 ms, which shows up as input and
+# compositor latency on the 1.5 GHz U74 cores; 250 Hz is the usual desktop
+# tick.  schedutil ramps from the scheduler's own utilization instead of
+# ondemand's 10 ms sampling window, and both governors stay built in, so
+# `echo ondemand > /sys/.../scaling_governor` remains available for A/B tests.
+"$kernel_config" --file "$output_dir/.config" --disable HZ_100
+"$kernel_config" --file "$output_dir/.config" --enable HZ_250
+"$kernel_config" --file "$output_dir/.config" --disable CPU_FREQ_DEFAULT_GOV_ONDEMAND
+"$kernel_config" --file "$output_dir/.config" --enable CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
+# Both target boards are 8GB. Boards whose DTS declares no linux,cma node fall
+# back to this built-in pool size, which has to hold the display, GPU and VPU
+# buffers.
+"$kernel_config" --file "$output_dir/.config" --set-val CMA_SIZE_MBYTES 512
 # zram-tools loads zram with modprobe during boot, so keep the driver as a
 # module rather than built-in. This also lets the userspace service choose the
 # number of devices and compressor at runtime.
@@ -51,13 +71,16 @@ for symbol in SWAP ZRAM_BACKEND_LZ4 ZRAM_BACKEND_LZO ZRAM_DEF_COMP_LZ4; do
 done
 "$kernel_source/scripts/config" --file "$output_dir/.config" --disable ZRAM_DEF_COMP_LZORLE
 kernel_make olddefconfig
-# Fail before the expensive build if the locked BSP loses graphics support.
-for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE SWAP ZRAM_BACKEND_LZ4 VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID; do
+# Fail before the expensive build if the locked BSP loses graphics support, the
+# sandbox userspace needs, or the interactive settings applied above.
+for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE SWAP ZRAM_BACKEND_LZ4 VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID CMA DMA_CMA SECCOMP SECCOMP_FILTER CPU_FREQ_DEFAULT_GOV_SCHEDUTIL; do
     grep -qx "CONFIG_${symbol}=y" "$output_dir/.config" \
         || die "required BSP option missing: CONFIG_$symbol"
 done
 grep -qx "CONFIG_ZRAM=m" "$output_dir/.config" \
     || die "required zram module missing: CONFIG_ZRAM=m"
+grep -qx "CONFIG_HZ=250" "$output_dir/.config" \
+    || die "kernel tick rate is not 250 Hz: $(grep '^CONFIG_HZ=' "$output_dir/.config" || echo 'CONFIG_HZ unset')"
 kernel_make -j"$jobs" Image modules dtbs
 
 build_desktop_dtb() {
@@ -109,6 +132,26 @@ done
 compatible=$(fdtget "$dtb_path" / compatible)
 [[ " $compatible " == *" $KERNEL_DTB_COMPATIBLE "* ]] \
     || die "DTB compatible does not match board: $compatible"
+
+# Display, GPU and VPU allocations all come out of the CMA pool.  A board DTS
+# without a linux,cma node does not fail to build; it falls back to the small
+# built-in default, and the failure then appears on the desk as an HDMI mode
+# that will not set or as stutter while the kernel migrates pages out of an
+# exhausted pool.  VisionFive 2 supplies this node itself; Mars needs the one
+# in dts/mars/desktop.dts, so both are checked here.
+cma_compatible=$(fdtget "$dtb_path" /reserved-memory/linux,cma compatible 2>/dev/null || true)
+cma_size=$(fdtget -t x "$dtb_path" /reserved-memory/linux,cma size 2>/dev/null || true)
+[[ "$cma_compatible" == shared-dma-pool ]] \
+    || die "DTB has no CMA pool for the display and GPU: /reserved-memory/linux,cma"
+fdtget "$dtb_path" /reserved-memory/linux,cma linux,cma-default >/dev/null 2>&1 \
+    || die "DTB CMA pool is not the default pool: /reserved-memory/linux,cma"
+read -r cma_hi cma_lo <<<"$cma_size"
+if [[ ! "$cma_hi" =~ ^[0-9a-f]+$ || ! "$cma_lo" =~ ^[0-9a-f]+$ ]]; then
+    die "cannot read the CMA pool size: '$cma_size'"
+fi
+cma_mib=$(((16#$cma_hi * 4294967296 + 16#$cma_lo) / 1048576))
+(( cma_mib >= 256 )) || die "CMA pool is too small for the desktop: ${cma_mib} MiB"
+printf 'kernel: CMA pool %s MiB\n' "$cma_mib"
 
 shopt -s nullglob
 deb_files=("$package_output_root"/*.deb)

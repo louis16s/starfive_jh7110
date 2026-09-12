@@ -21,18 +21,37 @@ class BootConfig(unittest.TestCase):
             self.assertIn("@KERNEL_DTB@", template)
             self.assertIn(compatible, read(f"configs/{board}.conf"))
 
-    def test_password_service_is_bounded(self):
+    def test_password_service_survives_interactive_setup(self):
         unit = configparser.ConfigParser(interpolation=None)
         unit.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-firstboot.service")
+        # First boot asks for a root password on the console.  A finite start
+        # timeout fires while the dialog is on screen, and a killed prompt
+        # leaves the image's locked root account locked, so the service must be
+        # allowed to wait for the user.
         self.assertEqual(unit["Service"]["Environment"], "TERM=linux")
         self.assertEqual(unit["Service"]["TTYPath"], "/dev/tty1")
-        self.assertLessEqual(int(unit["Service"]["TimeoutStartSec"]), 300)
+        self.assertEqual(unit["Service"]["TimeoutStartSec"], "infinity")
+        self.assertNotIn("RuntimeMaxSec", unit["Service"])
+        # The unit must own tty1 while it runs: before the getty so the two
+        # cannot race for the console, and never after it, which would
+        # contradict the ordering and make systemd drop the job.
+        self.assertEqual(unit["Unit"]["Conflicts"], "getty@tty1.service")
+        self.assertIn("getty@tty1.service", unit["Unit"]["Before"])
+        self.assertNotIn("getty@tty1.service", unit["Unit"].get("After", ""))
         script = read("rootfs/overlay/usr/libexec/jh7110-firstboot")
         self.assertNotIn("PARTNUM", script)
         self.assertIn("--output PARTN", script)
         self.assertNotIn("lsblk --help | grep -qw PARTN", read("scripts/build-rootfs.sh"))
         self.assertIn('resize2fs "$root_source"', script)
         self.assertIn("chvt 1", script)
+        # The account is unlocked before anything else that can fail, and the
+        # password is measured in characters, not bytes of the C-locale console.
+        self.assertLess(
+            script.index("setup_root_password\n"),
+            script.index('resize2fs "$root_source"'),
+        )
+        self.assertNotIn("passwd --unlock root", script)
+        self.assertIn("LC_ALL=C.UTF-8 wc -m", script)
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
 

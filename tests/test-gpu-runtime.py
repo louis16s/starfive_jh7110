@@ -61,7 +61,8 @@ class Runtime(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('destination is required', result.stderr)
 
-    def graphics(self, renderer='PowerVR Rogue', connected=True, firmware=True):
+    def graphics(self, renderer='PowerVR Rogue', connected=True, firmware=True,
+                 vulkan_renderer=None, drop=()):
         (self.root / 'sys/module/pvrsrvkm').mkdir(parents=True)
         for name in ['rgx.fw.36.50.54.182', 'rgx.sh.36.50.54.182']:
             if firmware or name.startswith('rgx.fw'):
@@ -76,10 +77,17 @@ class Runtime(unittest.TestCase):
         # No matching dmesg lines must not terminate the diagnostic early.
         self.command('dmesg', 'echo "unrelated kernel message"')
         self.command('timeout', 'shift; exec "$@"')
+        # The Vulkan probe runs through env, which has to drop the VAR=value
+        # arguments before exec'ing the real command.
+        self.command('env', 'while [ $# -gt 0 ]; do case $1 in *=*) shift ;; *) break ;; esac; done; exec "$@"')
         for command in ['vulkaninfo', 'glxinfo', 'eglinfo']:
-            self.command(command, f'echo "{renderer}"')
+            rendered = vulkan_renderer if command == 'vulkaninfo' and vulkan_renderer else renderer
+            self.command(command, f'echo "{rendered}"')
         for command in ['drm_info', 'xrandr']:
             self.command(command, 'echo OK')
+        # Simulate a tool the image did not ship, after the stubs exist.
+        for command in drop:
+            (self.bin / command).unlink()
         # Longest prefix first prevents replacing /lib inside /usr/lib twice.
         replacements = [(p, str(self.root) + p) for p in ['/sys/', '/dev/', '/etc/']]
         text = (ROOT / 'rootfs/overlay/usr/bin/jh7110-test-graphics').read_text()
@@ -113,6 +121,34 @@ class Runtime(unittest.TestCase):
         result = self.graphics(firmware=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('firmware is missing', result.stdout)
+
+    def test_x11_software_renderer_is_a_warning(self):
+        # The image configures modesetting with AccelMethod none on purpose, so
+        # a software GLX/EGL renderer is the designed X11 path.  It must not be
+        # reported as GPU acceleration, and it must not fail the run either:
+        # Vulkan is what proves the GPU works.
+        result = self.graphics(renderer='llvmpipe', vulkan_renderer='PowerVR Rogue')
+        self.assertIn('PASS Vulkan', result.stdout)
+        self.assertIn('WARN OpenGL', result.stdout)
+        self.assertNotIn('FAIL OpenGL', result.stdout)
+        self.assertIn('诊断失败计数: 0', result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_missing_display_does_not_fail_the_run(self):
+        # Serial or SSH sessions have no DISPLAY; that is an untestable path,
+        # not a hardware defect.
+        self.env.pop('DISPLAY')
+        result = self.graphics()
+        self.assertIn('WARN: 未设置 DISPLAY', result.stdout)
+        self.assertIn('诊断失败计数: 0', result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_missing_vulkaninfo_reports_the_command(self):
+        # probe() runs the Vulkan check through env; it must look past the
+        # wrapper and the VAR=value arguments when it decides what is missing.
+        result = self.graphics(drop=['vulkaninfo'])
+        self.assertIn('FAIL Vulkan: 未安装 vulkaninfo', result.stdout)
+        self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == '__main__':

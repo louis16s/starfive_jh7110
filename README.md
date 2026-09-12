@@ -204,7 +204,7 @@ U-Boot、OpenSBI 和板级启动介质配置必须按板型区分。当前配置
 
 ## HDMI、GPU 和 VPU 状态
 
-内核构建会检查 DRM、StarFive display controller、Inno HDMI 和 IMG/PVR 内核选项，Mars 还会单独生成和检查 Mars desktop DTB。
+内核构建会检查 DRM、StarFive display controller、Inno HDMI 和 IMG/PVR 内核选项，Mars 还会单独生成和检查 Mars desktop DTB。构建同时固化几项桌面必需的内核配置并逐项断言：`CMA_SIZE_MBYTES=512`（厂商 defconfig 用的是内核默认 16 MiB，不够一个 1080p 帧缓冲）、`CONFIG_HZ=250`、`CPU_FREQ_DEFAULT_GOV_SCHEDUTIL`，以及 `SECCOMP`/`SECCOMP_FILTER`。生成的 DTB 还要通过断言：必须存在不少于 256 MiB 的 `linux,cma` 默认池。
 
 本次更新将 sources.lock 固定的 StarFive PVR DDK 1.19.6345021 制作为
 `jh7110-pvr-rogue` Debian 包，包含 IMG BXE-4-32 firmware、PVR userspace、
@@ -244,17 +244,18 @@ GPU 包可执行 `make BOARD=mars gpu-package`。
 
 ## 诊断和测试
 
-系统工具：
+当前可用的系统工具（`jh7110-config` 与 `jh7110-selftest` 尚未发布）：
 
 ~~~sh
-jh7110-info
-sudo jh7110-config
-sudo jh7110-selftest
+jh7110-info            # 板型、内存与 CMA、CPU 调频、内核项、DRM/HDMI、GPU、温度
+jh7110-test-graphics   # 桌面会话内的 DRM/HDMI/Vulkan/OpenGL 验收
 ~~~
 
-当前可使用 jh7110-info、jh7110-test-graphics 以及标准 Linux 工具进行检查。
-硬件不存在的能力应报告 SKIP，不能伪造为 PASS。GPU 测试发现
-llvmpipe、softpipe 或 lavapipe 时会失败，避免把软件渲染报告为硬件加速。
+`jh7110-info` 是只读报告，缺失属性一律打印 unknown 或 SKIP，因为首次启动
+服务在 `set -e` 下用它记录硬件报告，诊断工具不能让启动失败。硬件不存在的
+能力应报告 SKIP，不能伪造为 PASS。GPU 测试只在 Vulkan 报软件渲染或没有
+PowerVR 证据时失败；OpenGL/EGL 报 llvmpipe 只记警告，因为 X11 走
+modesetting 且镜像默认 `AccelMethod none`，软件 GLX 是设计路径。
 
 ## 目录和文档
 

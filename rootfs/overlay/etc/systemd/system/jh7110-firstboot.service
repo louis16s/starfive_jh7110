@@ -1,6 +1,10 @@
 [Unit]
 Description=JH7110 first boot initialization
 After=local-fs.target systemd-logind.service
+# Before= plus Conflicts= is the "this unit owns tty1 until it finishes" idiom
+# (shutdown.target uses it): the getty is stopped if it already runs, and it
+# cannot start until ExecStart returns.  Adding After=getty@tty1.service as
+# well would contradict the Before= and make systemd drop one of the jobs.
 Before=display-manager.service getty@tty1.service
 Conflicts=getty@tty1.service
 ConditionPathExists=!/var/lib/jh7110/firstboot.done
@@ -8,7 +12,11 @@ ConditionPathExists=!/var/lib/jh7110/firstboot.done
 [Service]
 Type=oneshot
 Environment=TERM=linux
-TimeoutStartSec=300
+# TimeoutStartSec bounds how long the user may take to type and confirm a root
+# password on the console.  Any finite value can fire while the dialog is still
+# on screen, which kills the prompt and leaves the locked root account locked;
+# the unit's real progress is bounded by the dialog itself.
+TimeoutStartSec=infinity
 ExecStart=/usr/libexec/jh7110-firstboot
 StandardInput=tty
 StandardOutput=tty

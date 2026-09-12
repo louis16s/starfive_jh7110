@@ -31,6 +31,18 @@ readonly template="$REPO_ROOT/board/$board/extlinux.conf.in"
 [[ -f "$kernel_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB" ]] || die "missing board DTB"
 [[ -f "$template" ]] || die "missing extlinux template"
 
+# rootfs construction copies the host's qemu-riscv64-static into the target
+# while it customizes it and removes it from an EXIT trap.  A build killed
+# before that trap runs (CI job timeout, OOM kill) leaves the host binary
+# behind, and it would otherwise be rsynced into the published riscv64 image.
+# Neither the overlay nor the package lists ship any qemu binary, so its
+# presence here is always a leak.
+shopt -s nullglob
+leaked_emulators=("$rootfs_dir"/usr/bin/qemu-*-static)
+shopt -u nullglob
+[[ ${#leaked_emulators[@]} -eq 0 ]] \
+    || die "rootfs carries a host emulator binary: ${leaked_emulators[*]}"
+
 shopt -s nullglob
 initrds=("$rootfs_dir"/boot/initrd.img-*)
 shopt -u nullglob
@@ -104,25 +116,27 @@ install -m 0644 "${initrds[0]}" "$boot_mount/initrd.img-$kernel_release"
 install -m 0644 "${initrds[0]}" "$boot_mount/initrd.img"
 install -m 0644 "$kernel_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB" "$boot_mount/dtbs/$kernel_release/$KERNEL_DTB"
 
-root_partuuid=$(blkid -s PARTUUID -o value "$root_device")
+# blkid answers from udev's cache, which can lag behind the partition table
+# sfdisk just wrote.  An empty PARTUUID used to be substituted straight into
+# extlinux.conf and fstab, so the build reported success and produced an image
+# that cannot find its root filesystem.
+root_partuuid=
+for _ in {1..40}; do
+    root_partuuid=$(blkid -s PARTUUID -o value "$root_device" || true)
+    [[ -n "$root_partuuid" ]] && break
+    sleep 0.25
+done
+[[ -n "$root_partuuid" ]] || die "blkid returned no PARTUUID for $root_device"
 sed \
     -e "s|@KERNEL_RELEASE@|$kernel_release|g" \
     -e "s|@KERNEL_DTB@|$KERNEL_DTB|g" \
     -e "s|@ROOT_PARTUUID@|$root_partuuid|g" \
     "$template" > "$boot_mount/extlinux/extlinux.conf"
 
-if [[ -f "$boot_mount/Image.previous" && -f "$boot_mount/initrd.img.previous" ]]; then
-    cat >> "$boot_mount/extlinux/extlinux.conf" <<EOF
-
-LABEL previous
-    MENU LABEL Debian GNU/Linux - Previous Kernel
-    LINUX /Image.previous
-    INITRD /initrd.img.previous
-    FDT /dtbs/$kernel_release/$KERNEL_DTB
-    APPEND root=PARTUUID=$root_partuuid rw rootwait console=ttyS0,115200 earlycon=sbi
-EOF
-fi
-
+# There is deliberately no "previous kernel" boot entry: every image is built
+# from a fresh, empty boot partition (see the output-exists check above), so a
+# stale Image.previous can never be present and printing such an entry would
+# only produce a menu item that cannot boot.
 cat > "$root_mount/etc/fstab" <<EOF
 PARTUUID=$root_partuuid / ext4 defaults,noatime 0 1
 LABEL=$BOOT_PARTITION_LABEL /boot vfat umask=0077 0 2

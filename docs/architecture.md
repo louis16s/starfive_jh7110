@@ -195,14 +195,29 @@ The image file is intentionally not sized to 8GB RAM. It has a minimum build siz
 
 `jh7110-firstboot.service` performs only idempotent first-boot work:
 
-1. Ensure machine-id and SSH host keys exist.
+1. Prompt for a root password on tty1, before anything else that can fail. The
+   image ships a locked root account, so any later failure would otherwise
+   strand the user at a login prompt with no usable account.
 2. Set board-specific hostname.
 3. Configure locale/timezone defaults.
-4. Grow the root filesystem.
-5. Generate a hardware report.
-6. Record completion and disable itself.
+4. Ensure machine-id and SSH host keys exist.
+5. Grow the root filesystem.
+6. Generate a hardware report.
+7. Record completion and disable itself.
 
-`jh7110-info`, `jh7110-config` and `jh7110-selftest` are ordinary installed tools. They read board identity from the DT compatible/model, kernel/firmware metadata and capability matrix; they do not infer Mars from a VF2-compatible string.
+The service is `Type=oneshot` with `TimeoutStartSec=infinity`: a finite start
+timeout can fire while the password dialog is still on screen, which kills the
+prompt and leaves root locked. `Before=getty@tty1.service` plus
+`Conflicts=getty@tty1.service` is the "this unit owns tty1 until it finishes"
+idiom; adding `After=` for the same unit would contradict the `Before=` and make
+systemd drop one of the jobs.
+
+`jh7110-info` is an installed read-only report; `jh7110-config` and
+`jh7110-selftest` are not implemented yet. A report tool reads board identity
+from the DT `compatible`/`model`, kernel and firmware metadata, and never infers
+Mars from a VisionFive 2 compatible string. It must exit zero on a board that is
+missing an attribute, because firstboot runs it under `set -e` to record the
+hardware report.
 
 ## CI and reproducibility
 
@@ -216,7 +231,12 @@ GitHub Actions will use an x86_64 Ubuntu runner and cache source archives, ccach
 * license gate result;
 * build logs and artifact SHA-256.
 
-`workflow_dispatch` accepts `board=all|visionfive2|mars` and `build_type=release|debug`. A release job must build each requested board in a clean output directory. A failure in one board must not publish the other board under the wrong filename.
+`workflow_dispatch` accepts `board=all|visionfive2|mars` and `build_type=release|debug`. A `preflight` job rejects anything else before the matrix starts: `workflow_call` passes a free-form board, and an unknown value used to fall through the matrix expression to "build both boards" while every guarded step evaluated false, so the job reported success having built nothing. A release job must build each requested board in a clean output directory. A failure in one board must not publish the other board under the wrong filename.
+
+Publishing is opt-in (`publish_release` defaults to false) and the release asset
+list is generated from the files that were actually staged, not from extension
+globs, so `fail_on_unmatched_files` can be enabled without a board-specific run
+failing on the other board's patterns.
 
 ## Required validation gates
 

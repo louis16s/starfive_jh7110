@@ -20,6 +20,12 @@ command -v qemu-riscv64-static >/dev/null 2>&1 || die "qemu-riscv64-static is re
 command -v rsync >/dev/null 2>&1 || die "rsync is required"
 [[ -f /usr/share/keyrings/debian-archive-keyring.gpg ]] \
     || die "missing Debian archive keyring: install debian-archive-keyring"
+# The overlay copy uses --chown=root:root, the board config is written into
+# root-owned directories and the customization runs inside a real chroot.
+# Running unprivileged cannot satisfy any of those, so reject it up front
+# instead of failing halfway through the rootfs assembly.
+[[ "$EUID" -eq 0 ]] \
+    || die "rootfs construction requires root; run: sudo make BOARD=$board rootfs"
 
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/rootfs"
 readonly rootfs_dir="$output_dir/rootfs"
@@ -28,13 +34,9 @@ readonly overlay_dir="$REPO_ROOT/rootfs/overlay"
 readonly board_package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 readonly snapshot="$DEBIAN_SNAPSHOT"
 readonly debian_keyring=/usr/share/keyrings/debian-archive-keyring.gpg
-mmdebstrap_mode=unshare
-if [[ "$EUID" -eq 0 ]]; then
-    # Rootless unshare cannot reliably create a destination below the GitHub
-    # runner workspace after the kernel package build. In a privileged build,
-    # use mmdebstrap's root mode instead of nesting another user namespace.
-    mmdebstrap_mode=root
-fi
+# Privileged builds use mmdebstrap's root mode rather than nesting another
+# user namespace.
+readonly mmdebstrap_mode=root
 
 [[ ! -e "$rootfs_dir" ]] || die "output exists: $rootfs_dir; remove it explicitly before rebuilding"
 mkdir -p "$output_dir"
@@ -162,14 +164,28 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # Keep smartmontools installed while leaving its daemon opt-in.
         for service in smartmontools.service smartd.service; do
             if systemctl cat "$service" >/dev/null 2>&1; then
-                systemctl disable "$service"
+                # Leaving these enabled is the only thing that must not happen;
+                # a unit that is already absent or has no [Install] section is
+                # not a build failure.
+                systemctl disable "$service" >/dev/null 2>&1 || true
             fi
         done
         # Validate target binaries and desktop payload before assembling an image.
         for helper in chvt whiptail growpart resize2fs lsblk; do
             command -v "$helper" >/dev/null
         done
-        nft -c -f /etc/nftables.conf
+        # nft opens a NETLINK_NETFILTER socket even for a dry run, and QEMU
+        # user-mode does not provide one, so the checker itself cannot start
+        # there.  Only a real ruleset error may fail the build.
+        if ! nft_output=$(nft -c -f /etc/nftables.conf 2>&1); then
+            if [[ $nft_output == *"Netlink socket"* ||
+                $nft_output == *"Protocol not supported"* ]]; then
+                echo "rootfs: WARN nft syntax check skipped; QEMU user-mode has no netlink" >&2
+            else
+                printf "%s\\n" "$nft_output" >&2
+                exit 1
+            fi
+        fi
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
         test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop

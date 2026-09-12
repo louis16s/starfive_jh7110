@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Read-only hardware report for Mars and VisionFive 2.
+#
+# Every attribute is best effort.  jh7110-firstboot runs this under `set -e`
+# to record the first-boot hardware report, so a diagnostic must not be able to
+# abort the boot: a board whose DT lacks an attribute, or a kernel without a
+# DRM driver, prints unknown/SKIP instead of failing.
+export LC_ALL=C
+
+readonly DT=/sys/firmware/devicetree/base
+
+# Device tree properties are NUL terminated, and several (compatible) hold a
+# list.  Print them space separated on one line, or nothing when unreadable.
+property() {
+    local value
+    [[ -r "$1" ]] || return 0
+    value=$(tr '\000' '\n' < "$1" | sed '/^$/d') || return 0
+    printf '%s' "${value//$'\n'/ }"
+}
+
+first_line() {
+    [[ -r "$1" ]] || return 0
+    { tr '\000' '\n' < "$1" || true; } | sed -n '1p'
+}
+
+# For device tree properties only: `compatible` holds several NUL separated
+# strings, and reporting just the first one hides the SoC compatible that the
+# board is actually matched against.
+print_value() {
+    local value
+    value=$(property "$1")
+    printf '  %-34s %s\n' "$2" "${value:-unknown}"
+}
+
+print_status() {
+    printf '  %-34s %s\n' "$1" "$2"
+}
+
+# Glob expansion is used with an explicit existence test rather than nullglob
+# and arrays: ${#array[@]} on an empty array is an unbound-variable error under
+# `set -u` on older bash, and every glob here is legitimately empty on a board
+# without that hardware.
+exists() {
+    [[ -e "$1" ]]
+}
+
+meminfo() {
+    local value
+    [[ -r /proc/meminfo ]] || { printf 'unknown'; return 0; }
+    value=$(awk -v key="$1:" '$1 == key { print $2 " " $3; exit }' /proc/meminfo) || return 0
+    printf '%s' "${value:-unknown}"
+}
+
+printf 'JH7110 hardware report\n'
+printf 'kernel release: %s\n' "$(uname -r)"
+
+printf '\n[Identity]\n'
+print_value "$DT/model" 'model'
+print_value "$DT/compatible" 'compatible'
+# Board identity comes from the DT, not from a default: a Mars DTB booted on a
+# VisionFive 2 must not be reported as a Mars, and the compatible strings above
+# are what a bug report has to be judged on.
+board_id=unconfigured
+if [[ -r /etc/jh7110/board.conf ]]; then
+    board_id=$(bash -c 'source /etc/jh7110/board.conf >/dev/null 2>&1; printf %s "${BOARD_ID:-unconfigured}"')
+fi
+print_status 'board profile' "$board_id"
+print_value "$DT/chosen/bootargs" 'bootargs'
+print_value "$DT/chosen/opensbi/version" 'opensbi version'
+
+printf '\n[Memory]\n'
+print_status 'MemTotal' "$(meminfo MemTotal)"
+# The display, GPU and VPU drivers allocate scanout buffers from the CMA pool.
+# Without a linux,cma reserved-memory node the kernel only reserves
+# CONFIG_CMA_SIZE_MBYTES (16 MiB by default), less than a single 1080p
+# XRGB8888 framebuffer; a healthy desktop board reports 512 MiB here.
+print_status 'CmaTotal' "$(meminfo CmaTotal)"
+print_status 'CmaFree' "$(meminfo CmaFree)"
+if ! meminfo CmaTotal | grep -qE '^[0-9]+'; then
+    print_status 'CMA pool' 'SKIP: kernel was built without CMA'
+fi
+
+printf '\n[CPU]\n'
+print_status 'cores' "$(nproc 2>/dev/null || echo unknown)"
+cpu_uarch=$(awk -F': ' '/^uarch/ { print $2; exit }' /proc/cpuinfo 2>/dev/null) || cpu_uarch=
+print_status 'uarch' "${cpu_uarch:-unknown}"
+cpufreq_policies=0
+for policy in /sys/devices/system/cpu/cpufreq/policy[0-9]*; do
+    exists "$policy" || continue
+    cpufreq_policies=$((cpufreq_policies + 1))
+    printf '  %-34s %s\n' "${policy##*/} governor/freq" \
+        "$(first_line "$policy/scaling_governor") @ $(first_line "$policy/scaling_cur_freq") kHz"
+done
+if ((cpufreq_policies == 0)); then
+    print_status 'cpufreq' 'SKIP: no cpufreq policy (fixed frequency)'
+fi
+
+printf '\n[Kernel configuration]\n'
+kernel_config="/boot/config-$(uname -r)"
+if [[ -r "$kernel_config" ]]; then
+    print_status 'config' "$kernel_config"
+    grep -E '^(CONFIG_HZ|CONFIG_CMA_SIZE_MBYTES|CONFIG_CMA|CONFIG_DMA_CMA|CONFIG_SECCOMP|CONFIG_SECCOMP_FILTER|CONFIG_CPU_FREQ_DEFAULT_GOV_[A-Z_]+)=' \
+        "$kernel_config" | sed 's/^/  /' || true
+else
+    print_status 'config' "SKIP: $kernel_config is not installed"
+fi
+
+printf '\n[Display and DRM]\n'
+drm_cards=0
+for card in /sys/class/drm/card[0-9]*; do
+    exists "$card" || continue
+    # card[0-9]* also matches every connector (card0-HDMI-A-1), which would be
+    # reported as a card with no driver.
+    [[ "${card##*/}" =~ ^card[0-9]+$ ]] || continue
+    drm_cards=$((drm_cards + 1))
+    driver=$(readlink -f "$card/device/driver" 2>/dev/null || true)
+    print_status "${card##*/}" "driver=${driver##*/}"
+done
+if ((drm_cards == 0)); then
+    print_status 'DRM' 'SKIP: no DRM device (no display support in this kernel)'
+fi
+for connector in /sys/class/drm/card[0-9]*-*; do
+    exists "$connector" || continue
+    printf '  %-34s status=%s enabled=%s\n' "${connector##*/}" \
+        "$(first_line "$connector/status")" "$(first_line "$connector/enabled")"
+done
+
+printf '\n[GPU: IMG BXE-4-32]\n'
+if [[ -d /sys/module/pvrsrvkm || -d /sys/module/pvr ]]; then
+    print_status 'kernel module pvrsrvkm' 'LOADED'
+else
+    print_status 'kernel module pvrsrvkm' 'not loaded (try: systemctl status jh7110-pvr)'
+fi
+firmware_files=0
+for firmware in /lib/firmware/rgx.fw.* /lib/firmware/rgx.sh.*; do
+    [[ -s "$firmware" ]] || continue
+    firmware_files=$((firmware_files + 1))
+    print_status "${firmware##*/}" 'present'
+done
+if ((firmware_files == 0)); then
+    print_status 'firmware' 'SKIP: IMG BXE firmware is not installed'
+fi
+if [[ -e /usr/lib/libVK_IMG.so || -e /usr/lib/libVK_IMG.so.1 ]]; then
+    print_status 'libVK_IMG.so' 'present'
+else
+    print_status 'libVK_IMG.so' 'SKIP: IMG Vulkan ICD library is not installed'
+fi
+if [[ -e /etc/vulkan/icd.d/icdconf.json ]]; then
+    print_status 'icdconf.json' 'present'
+else
+    print_status 'icdconf.json' 'SKIP: IMG Vulkan ICD manifest is missing'
+fi
+render_nodes=0
+for node in /dev/dri/renderD*; do
+    exists "$node" || continue
+    render_nodes=$((render_nodes + 1))
+    print_status "render node ${node##*/}" 'present'
+done
+if ((render_nodes == 0)); then
+    print_status 'render nodes' 'SKIP: no /dev/dri/renderD*'
+fi
+
+printf '\n[Thermal]\n'
+thermal_zones=0
+for zone in /sys/class/thermal/thermal_zone[0-9]*; do
+    exists "$zone" || continue
+    thermal_zones=$((thermal_zones + 1))
+    temperature=$(first_line "$zone/temp")
+    # thermal_zone temperature is reported in millidegrees Celsius.
+    if [[ "$temperature" =~ ^-?[0-9]+$ ]]; then
+        printf '  %-34s %s C\n' "$(first_line "$zone/type")" "$((temperature / 1000))"
+    else
+        printf '  %-34s %s\n' "$(first_line "$zone/type")" 'unknown'
+    fi
+done
+if ((thermal_zones == 0)); then
+    print_status 'thermal zones' 'SKIP: no thermal zone registered'
+fi
+
+printf '\n[Root filesystem]\n'
+if command -v findmnt >/dev/null 2>&1; then
+    findmnt --noheadings --output SOURCE,FSTYPE,SIZE / 2>/dev/null | sed 's/^/  /' || true
+else
+    print_status 'findmnt' 'SKIP: not installed'
+fi

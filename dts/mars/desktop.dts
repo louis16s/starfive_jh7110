@@ -2,6 +2,37 @@
 // Retain the locked Mars board, PHY, storage and power configuration.
 #include "jh7110-milkv-mars.dts"
 
+/*
+ * Milk-V Mars inherits jh7110-common.dtsi, which has no reserved-memory node,
+ * so CMA falls back to the built-in CONFIG_CMA_SIZE_MBYTES default while the
+ * display, GPU and VPU drivers allocate every framebuffer and GEM buffer
+ * through it.  With the 16 MiB default a single 1080p XRGB8888 buffer pair
+ * already exceeds the pool: allocations fail outright or the kernel spends the
+ * frame migrating pages out of the pool, which shows up as HDMI modes failing
+ * to set and as stutter in the desktop.
+ *
+ * VisionFive 2 gets this region from jh7110-starfive-visionfive-2.dtsi; this
+ * node is that board's proven configuration copied verbatim, including the
+ * sub-4GiB placement the display hardware requires.  The region is "reusable",
+ * so the pages still serve as page cache when no device has claimed them.
+ */
+/ {
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        linux,cma {
+            compatible = "shared-dma-pool";
+            reusable;
+            size = <0x0 0x20000000>;
+            alignment = <0x0 0x1000>;
+            alloc-ranges = <0x0 0x70000000 0x0 0x20000000>;
+            linux,cma-default;
+        };
+    };
+};
+
 &sysgpio {
     mars_hdmi_pins: mars-hdmi-0 {
         scl-pins {

@@ -51,7 +51,11 @@ setup_root_password() {
             --passwordbox "Confirm the root password:" \
             10 72 3>&1 1>&2 2>&3) || die "password confirmation cancelled"
 
-        if (( ${#password} < 8 )); then
+        # The console locale is C so the Linux VT font can render the dialog,
+        # and under C ${#password} counts bytes: a three-character CJK password
+        # would satisfy an eight-character minimum.  Count characters instead.
+        password_length=$(printf '%s' "$password" | LC_ALL=C.UTF-8 wc -m)
+        if (( password_length < 8 )); then
             whiptail --title "Password too short" \
                 --msgbox "Use at least 8 characters." 8 60
             continue
@@ -61,16 +65,26 @@ setup_root_password() {
                 --msgbox "Please enter matching passwords." 8 60
             continue
         fi
+        # chpasswd writes a hash, which already clears the locked state the
+        # image ships with; a separate `passwd --unlock` would only add a way
+        # for this step to fail after the password has been accepted.
         if ! printf 'root:%s\n' "$password" | chpasswd; then
             unset password confirmation
             die "failed to set root password"
         fi
-        passwd --unlock root
         unset password confirmation
         echo "Password configured. Starting the desktop."
         break
     done
 }
+
+# Prompt for the root password before anything else that can fail.  The image
+# is built with a locked root account, so every later step in this script - an
+# invalid timezone in board.conf, a partition table that cannot be grown - is a
+# step that would otherwise strand the user on a login prompt with no usable
+# account.  setup_root_password returns immediately once a password is set, so
+# re-running this service after a later failure does not ask twice.
+setup_root_password
 
 if [[ -n "${BOARD_ID:-}" && "$BOARD_ID" != unconfigured ]]; then
     hostnamectl set-hostname "jh7110-$BOARD_ID"
@@ -115,12 +129,17 @@ fi
 [[ -b "$root_source" ]] || die "root is not a block device: $root_source"
 [[ $(findmnt --noheadings --output FSTYPE /) == ext4 ]] || die "expected ext4 root"
 # e2fsprogs is explicitly installed; do not rely on systemd's optional growfs helper.
+# Failing here leaves the root password already set, so the failure stays
+# recoverable: log in on the console and run this service again.
 resize2fs "$root_source" || die "could not grow the root filesystem"
 
-setup_root_password
-
+# The hardware report is diagnostic, and this script runs under `set -e`.
+# jh7110-info itself never fails on a missing attribute, but the redirect can
+# still fail (a full or read-only state directory), and losing the report must
+# not cost the user the rest of first boot.
 if command -v jh7110-info >/dev/null 2>&1; then
-    jh7110-info > "$STATE_DIR/hardware-report.firstboot.txt"
+    jh7110-info > "$STATE_DIR/hardware-report.firstboot.txt" \
+        || echo "jh7110-firstboot: could not write the hardware report" >&2
 fi
 
 touch "$STATE_DIR/firstboot.done"

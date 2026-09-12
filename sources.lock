@@ -43,11 +43,16 @@ sources:
     url: https://github.com/starfive-tech/u-boot.git
     ref: JH7110_VisionFive2_devel
     commit: c4c67bb66ae6f41c98537d18cf5c3abc8b97b8e4
-    role: stable-bsp-bootloader-reference
+    role: reference-only
     license: GPL-2.0-only
     notes: >-
-      Vendor branch contains the VisionFive 2 board implementation.  Mars
-      bootloader separation remains a Phase 3 integration task.
+      Reference only, and not a build input for either board.  The defconfig at
+      this commit sets CONFIG_SPL_FIT_SOURCE="jh7110-uboot-fit-image.its", a
+      file that exists only in the vendor SDK's conf/ directory and never in the
+      U-Boot tree, so a build produces neither u-boot.itb nor
+      spl/u-boot-spl.bin.normal.out.  Both boards build uboot_upstream instead;
+      see configs/visionfive2.conf and docs/build.md.  Mars bootloader
+      separation still owes an on-hardware test.
 
   starfive_opensbi:
     name: StarFive OpenSBI BSP submodule from VisionFive2 v6.0.0

@@ -44,6 +44,29 @@ The kernel target also invokes the kernel `bindeb-pkg` target with a fixed Debia
 
 Mars uses the locked upstream U-Boot reference because the StarFive vendor U-Boot tree does not contain the Mars DTB in its board configuration. The Mars profile and build checks reject a missing Mars DTB rather than silently falling back to VisionFive 2.
 
+Both boards build `uboot_upstream`. The `starfive_uboot` entry in `sources.lock`
+is reference-only: its defconfig at the pinned commit sets
+`CONFIG_SPL_FIT_SOURCE="jh7110-uboot-fit-image.its"`, a file that exists only in
+the vendor SDK's `conf/` directory and never in the U-Boot tree, so a build from
+it produces neither `u-boot.itb` nor `spl/u-boot-spl.bin.normal.out`.
+
+### Kernel configuration the desktop depends on
+
+`scripts/build-kernel.sh` starts from the locked board defconfig and then forces
+a small set of options, each with a build-time assertion so a silent regression
+fails the build instead of the board:
+
+| Option | Why |
+| --- | --- |
+| `CMA_SIZE_MBYTES=512` | The vendor defconfig sets no CMA option, so the kernel falls back to its own 16 MiB default - less than one 1080p XRGB8888 framebuffer (8.29 MiB) for a driver stack that allocates every scanout buffer from CMA. |
+| `CONFIG_HZ=250` | The locked defconfig sets `HZ_100`, which caps timer resolution for interactivity and USB/audio latency. |
+| `CPU_FREQ_DEFAULT_GOV_SCHEDUTIL` | The defconfig defaulted to `ondemand`; `schedutil` uses the scheduler's own utilisation signal. |
+| `SECCOMP`/`SECCOMP_FILTER` | Absent from the vendor defconfig (it also sets `CONFIG_EXPERT`, which makes SECCOMP default off), so every sandboxed service - and most of the desktop stack - ran with syscall filtering unavailable. |
+
+The built DTB must additionally carry a `linux,cma` default pool of at least
+256 MiB; the check reads it back out of the compiled blob with `fdtget`. On a
+running board `jh7110-info` reports the same pool as `CmaTotal`.
+
 The JH7110 SPI-NOR boot chain has two separate files. The SPL file is
 `u-boot/spl/u-boot-spl.bin.normal.out` and is written at offset `0x0`; the
 second-stage payload is `u-boot/u-boot.itb` and is written at offset
@@ -79,7 +102,7 @@ make BOARD=visionfive2 rootfs
 make BOARD=mars rootfs
 ```
 
-The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `root` account, installs the selected board's licensed `jh7110-pvr-rogue` package when it has been built, and installs `jh7110-firstboot.service`. On local first boot, an English `whiptail` screen asks for and confirms a root password on the HDMI text console before LightDM starts; the desktop remains localized separately. The service then sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report when `jh7110-info` is present.
+The result is a directory rootfs under `build/<board>/rootfs/rootfs`. The builder removes machine-id and SSH host keys, enables the common services, creates a locked `root` account, installs the selected board's licensed `jh7110-pvr-rogue` package when it has been built, and installs `jh7110-firstboot.service`. On local first boot, an English `whiptail` screen asks for and confirms a root password on the HDMI text console before LightDM starts; the desktop remains localized separately. The prompt runs before any other first-boot step that can fail, because the image ships root locked and a later failure would leave no usable account; the password length is counted in characters rather than in bytes, so a short CJK password cannot pass an eight-byte check under the `C` console locale. The service then sets the board hostname, initializes locale and identity, grows the root filesystem when the image layout permits it, and records a hardware report via `jh7110-info`.
 
 The default timezone is `Asia/Shanghai` (UTC+8). Both `zh_CN.UTF-8` and
 `en_US.UTF-8` are generated; the default locale is `zh_CN.UTF-8` with the

@@ -11,6 +11,21 @@ systemd 默认目标为 graphical.target。Weston 保留为手动测试会话。
 Ethernet PHY、PCIe、USB、电源和板型信息。DC endpoint 1 与 HDMI 互连。
 6.12 HDMI 驱动要求 HPD GPIO 和电源属性，不能仅将 status 改成 okay。
 
+### CMA 预留区
+
+`dts/mars/desktop.dts` 还补上了 VF2 已验证的 `reserved-memory/linux,cma`
+节点（512 MiB，`shared-dma-pool` + `reusable` + `linux,cma-default`，
+`alloc-ranges` 限定在 4 GiB 以下的 `0x70000000`–`0x90000000`）。
+
+Mars 的 DTS 链（`jh7110-milkv-mars.dts` → `jh7110-common.dtsi` → `jh7110.dtsi`）
+里原本没有任何 reserved-memory 节点，而厂商 defconfig 也没有 CMA 条目：
+`kernel/dma/Kconfig` 的 `CMA_SIZE_MBYTES` 在内核里默认只有 16 MiB。
+显示、GPU、VPU 驱动都通过 CMA 分配扫描输出缓冲，一个 1080p XRGB8888
+帧缓冲就是 8.29 MiB，16 MiB 池在桌面会话下会立刻耗尽。
+`scripts/build-kernel.sh` 现在设置 `CMA_SIZE_MBYTES=512` 并断言生成的
+DTB 里存在 `linux,cma` 默认池且不小于 256 MiB，构建期就会拦住回退。
+运行期可用 `jh7110-info` 的 `CmaTotal` 字段核对（健康值 524288 kB）。
+
 依据：
 
 - [Milk-V 官方 Mars DTS](https://github.com/milkv-mars/mars-buildroot-sdk/blob/1fd6bac9f2efde47fbb8afd28d2903c49f893e3f/linux/arch/riscv/boot/dts/starfive/jh7110-milkv-mars.dtsi)：HDMI endpoint 1 和 GPU 启用。
@@ -38,10 +53,11 @@ SHA256，并通过 dpkg 安装 firmware、PVR userspace、Vulkan ICD 和
 
 ## 实板检查
 
-在桌面终端运行 `jh7110-test-graphics`，保存完整输出。它检查 DRM、
-HDMI 状态/模式、Vulkan、EGL 和 OpenGL，软件渲染或探测失败返回非零。
-`drm_info` 成功和 `/dev/dri/card0` 存在只能说明 DRM 路径存在，
-必须核对 Vulkan device 和 GL renderer，不能把 llvmpipe 当作 GPU 通过。
+在桌面终端运行 `jh7110-test-graphics`，保存完整输出。它检查 PVR 内核
+模块、firmware、DRM 节点、HDMI 状态与模式、Vulkan、EGL 和 OpenGL。
+`drm_info` 成功和 `/dev/dri/card0` 存在只能说明 DRM 路径存在，必须核对
+Vulkan device 和 GL renderer，不能把 llvmpipe 当作 GPU 通过。只有
+Vulkan 报出软件渲染或没有 PowerVR 证据时才算 GPU 失败，其余判定见文末。
 
 黑屏时从串口查看 `journalctl -b -u lightdm` 和
 `journalctl -b -k`，关注 drm/hdmi/pvr、deferred probe 和电源错误。
@@ -51,11 +67,6 @@ HDMI 输出与 GPU 渲染是两条不同路径，软件渲染也可能显示 XFC
 密码确认后才允许 LightDM 启动；LightDM 配置为手动输入用户名，因此
 可以使用 root 登录。没有写入任何固定默认密码。串口维护时可执行
 `systemctl restart jh7110-firstboot.service` 重新进入流程。
-
-在桌面终端运行 `jh7110-test-graphics`。它检查 PVR 内核模块、firmware、
-DRM 节点、HDMI 状态、Vulkan、EGL 和 OpenGL；检测到 llvmpipe/softpipe/
-lavapipe 会失败，避免把 CPU 软件渲染误报为 GPU 通过。HDMI 输出与 GPU
-渲染是两条不同路径，软件渲染也可能显示 XFCE。
 
 ## 2026-09-12 审查后的默认策略
 
@@ -70,7 +81,17 @@ X11 保留 modesetting 的软件显示路径，并默认关闭 XFWM 合成，减
 内存交换采用 LZ4 zram，逻辑容量为内存的 25%，物理内存按需占用。
 这些是性能配置调整，尚无实板帧率、功耗或延迟的前后对比数据。
 
-图形诊断在没有 HDMI 连接、缺少任一 GPU 固件、缺少检测命令、
-软件渲染或未识别 PowerVR 时返回失败；无相关 dmesg 行不会提前退出。
+图形诊断在没有 HDMI 连接、缺少任一 GPU 固件、缺少检测命令，
+或 Vulkan 报软件渲染 / 没有 PowerVR 证据时返回失败；无相关 dmesg 行
+不会提前退出。两处判定按"是否属于本镜像的设计路径"区分：
+
+- OpenGL 与 EGL 报 llvmpipe 只记 WARN 并计入警告，不计失败。X11 走
+  modesetting，且镜像默认 `AccelMethod none`
+  （`/etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf`），软件 GLX/EGL
+  是设计结果而不是 GPU 故障；硬件加速由 Vulkan 一项负责证明。报成
+  FAIL 会让每次桌面自检都在正常配置下失败。
+- 未设置 `DISPLAY` 时（串口或 SSH 会话）只记 WARN 并跳过 X11 检测。
+  这项检查在无桌面会话时无从执行，报成失败会让整份诊断恒定非零。
+
 完整 X11 验收需在已登录的桌面终端运行。详细审查记录见
 [代码审查](audit-20260912.md)。
