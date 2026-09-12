@@ -49,30 +49,38 @@ class BootConfig(unittest.TestCase):
         self.assertIn("growpart_status", script)
         self.assertNotIn("lsblk --help | grep -qw PARTN", read("scripts/build-rootfs.sh"))
 
-    def test_interactive_setup_survives_waiting_for_a_person(self):
+    def test_recovery_console_setup_is_opt_in(self):
         unit = configparser.ConfigParser(interpolation=None)
         unit.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-console-setup.service")
-        # The console setup asks for a password.  A finite start timeout fires
-        # while the dialog is on screen, and a killed prompt leaves the image's
-        # locked root account locked, so this unit must be allowed to wait for
-        # the user.  It is the recovery path as well as the first-run path.
+        # The console setup asks for a password on tty9 and is the recovery
+        # path: the greeter asks for it when the graphical setup cannot run or
+        # is not being finished, and a person can start it by hand.  It must
+        # never be part of the boot, because the fallback holding up the
+        # machine it exists to rescue is the one failure it would not survive.
+        self.assertNotIn("Install", unit)
         self.assertEqual(unit["Service"]["Environment"], "TERM=linux")
-        self.assertEqual(unit["Service"]["TTYPath"], "/dev/tty1")
-        self.assertEqual(unit["Service"]["TimeoutStartSec"], "infinity")
+        self.assertEqual(unit["Service"]["TTYPath"], "/dev/tty9")
+        self.assertNotEqual(unit["Service"]["TimeoutStartSec"], "infinity")
         self.assertNotIn("RuntimeMaxSec", unit["Service"])
         self.assertEqual(unit["Service"]["ExecStart"], "/usr/libexec/jh7110-console-setup")
         self.assertIn("jh7110-prepare.service", unit["Unit"]["After"])
         self.assertEqual(
             unit["Unit"]["ConditionPathExists"], "!/var/lib/jh7110/oobe.done"
         )
-        # The unit must own tty1 while it runs: before the getty so the two
+        # The unit must own tty9 while it runs: before the getty so the two
         # cannot race for the console, and never after it, which would
         # contradict the ordering and make systemd drop the job.
-        self.assertEqual(unit["Unit"]["Conflicts"], "getty@tty1.service")
-        self.assertIn("getty@tty1.service", unit["Unit"]["Before"])
-        self.assertNotIn("getty@tty1.service", unit["Unit"].get("After", ""))
+        self.assertEqual(unit["Unit"]["Conflicts"], "getty@tty9.service")
+        self.assertIn("getty@tty9.service", unit["Unit"]["Before"])
+        self.assertNotIn("getty@tty9.service", unit["Unit"].get("After", ""))
+        # tty1 is the desktop's: the greeter and the wizard run there, so the
+        # recovery console is the one that has to move out of the way.
+        self.assertNotEqual(unit["Service"]["TTYPath"], "/dev/tty1")
         script = read("rootfs/overlay/usr/libexec/jh7110-console-setup")
-        self.assertIn("chvt 1", script)
+        self.assertIn('readonly SETUP_TTY=9', script)
+        # Started from the serial console there is no virtual console to switch
+        # to, and the dialogs simply appear where the command was run.
+        self.assertIn('chvt "$SETUP_TTY"', script)
         # The account is created before anything else that can fail, and the
         # password is measured in characters rather than bytes, because the
         # console locale is C and a CJK password would otherwise count double.
@@ -91,6 +99,108 @@ class BootConfig(unittest.TestCase):
         self.assertIn("/usr/libexec/jh7110-prepare", script)
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
+
+    def test_graphical_setup_is_the_first_run_path(self):
+        # A board that has never been set up boots to the setup, not to a login
+        # screen with no account behind it.  lightdm starts the wrapper, which
+        # runs the wizard and then execs the real greeter in the same session -
+        # which is why getting from one to the other needs no LightDM restart.
+        lightdm = read("rootfs/overlay/etc/lightdm/lightdm.conf.d/50-jh7110.conf")
+        self.assertIn("greeter-session=jh7110-greeter", lightdm)
+        greeter_entry = configparser.ConfigParser(interpolation=None)
+        greeter_entry.read(ROOT / "rootfs/overlay/usr/share/xgreeters/jh7110-greeter.desktop")
+        self.assertEqual(
+            greeter_entry["Desktop Entry"]["Exec"], "/usr/libexec/jh7110-greeter"
+        )
+        # lightdm resolves greeter-session against the desktop file names in
+        # /usr/share/xgreeters, so the name and the file have to agree.
+        declared = [
+            line.split("=", 1)[1].strip()
+            for line in lightdm.splitlines()
+            if line.startswith("greeter-session=")
+        ]
+        self.assertEqual(declared, ["jh7110-greeter"])
+        self.assertTrue(
+            (ROOT / f"rootfs/overlay/usr/share/xgreeters/{declared[0]}.desktop").is_file()
+        )
+
+        wrapper = read("rootfs/overlay/usr/libexec/jh7110-greeter")
+        # The wrapper runs as the greeter account and must not need privilege
+        # for anything but the one thing it asks polkit for.  What it prints at
+        # a person is not what it runs, so the comments and the hint it prints
+        # are taken out before looking for a way to raise privilege.
+        for line in wrapper.splitlines():
+            command = line.strip()
+            if not command or command.startswith("#"):
+                continue
+            # A line that starts with one of these is the wrapper raising its
+            # own privilege, which it must never do.  The hint it prints at a
+            # person mentions sudo as something for them to type; that is a
+            # message, not a command, and it does not start the line.
+            for raise_privilege in ("sudo", "pkexec", "su ", "setpriv", "chroot"):
+                self.assertFalse(
+                    command.startswith(raise_privilege),
+                    f"{raise_privilege} is run as a command: {command}",
+                )
+        self.assertIn('exec "$GREETER" "$@"', wrapper)
+        # It hands the session over rather than restarting lightdm, and it
+        # re-checks the done file after the wizard returns - the wizard exits 0
+        # whether the user finished or closed the window.
+        self.assertEqual(wrapper.count('if [[ -e "$DONE_FILE" ]]; then'), 2)
+        self.assertIn('"$WIZARD"', wrapper)
+        # A board without GTK must reach the recovery console immediately
+        # rather than after burning every retry on a wizard that cannot open.
+        self.assertIn('"$WIZARD" --check', wrapper)
+        self.assertIn("ATTEMPT_LIMIT=3", wrapper)
+        # The one privileged thing it does: ask for the recovery unit.
+        self.assertIn('systemctl start --no-block "$RECOVERY_UNIT"', wrapper)
+
+        # The permission it asks for is granted to that account alone, and only
+        # for starting that one unit.
+        rules = read("rootfs/overlay/etc/polkit-1/rules.d/50-jh7110-oobe.rules")
+        self.assertIn('subject.user !== "lightdm"', rules)
+        self.assertIn("jh7110-console-setup.service", rules)
+        self.assertIn('action.lookup("verb") === "start"', rules)
+        # A rules file that can run a program is a rules file that can be made
+        # to run anything; this one decides, and decides nothing else.
+        self.assertNotIn("polkit.spawn", rules)
+
+    def test_the_setup_backend_is_a_socket_with_a_fixed_method_list(self):
+        # The wizard runs as the greeter account and changes the machine only
+        # through this socket, so the socket has to exist before the greeter
+        # session does and the daemon behind it is started by the connection.
+        socket = configparser.ConfigParser(interpolation=None)
+        socket.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-oobe-backend.socket")
+        self.assertEqual(socket["Socket"]["ListenStream"], "/run/jh7110/oobe.sock")
+        self.assertEqual(socket["Socket"]["SocketGroup"], "lightdm")
+        self.assertEqual(socket["Socket"]["SocketMode"], "0660")
+        self.assertEqual(socket["Socket"]["SocketUser"], "root")
+        self.assertIn("sockets.target", socket["Install"]["WantedBy"])
+        rootfs = read("scripts/build-rootfs.sh")
+        self.assertIn("systemctl enable jh7110-oobe-backend.socket", rootfs)
+        # The daemon itself is started by a connection to that socket and by
+        # nothing else.  An [Install] section would let presets - or anyone
+        # running `systemctl enable` - turn it into a root daemon that runs on
+        # every boot of every board, including the ones that never show the
+        # setup wizard at all.
+        service = configparser.ConfigParser(interpolation=None)
+        service.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-oobe-backend.service")
+        self.assertNotIn("Install", service)
+        self.assertEqual(
+            service["Service"]["ExecStart"], "/usr/libexec/jh7110-oobe-backend"
+        )
+        self.assertIn("jh7110-oobe-backend.socket", service["Unit"]["Requires"])
+        # The socket is not readable by anyone else, and the daemon checks the
+        # peer on top of that.
+        self.assertIn("SO_PEERCRED", read("rootfs/overlay/usr/libexec/jh7110-oobe-backend"))
+        # A GTK3 wizard through PyGObject is the whole of the graphical stack it
+        # needs, and it is a hard dependency of the image rather than something
+        # the package set happens to bring in.
+        desktop_packages = read("rootfs/packages/desktop.list").splitlines()
+        for package in ("python3", "python3-gi", "gir1.2-gtk-3.0"):
+            self.assertIn(package, desktop_packages)
+        for package in ("lightdm", "lightdm-gtk-greeter", "accountsservice", "fonts-noto-cjk"):
+            self.assertIn(package, desktop_packages)
 
     def test_root_stays_locked_and_the_desktop_account_has_sudo(self):
         # The image ships root locked and no human account at all.  The account
@@ -175,6 +285,26 @@ class BootConfig(unittest.TestCase):
         self.assertIn('Option "AccelMethod" "none"', config)
         self.assertNotIn("BusID", config)
         self.assertIn("TimeoutStartSec=30", read("scripts/build-gpu-package.sh"))
+
+    def test_the_chroot_payload_is_one_string(self):
+        # The customisation script is one single-quoted argument, so a single
+        # quote anywhere inside it ends the argument early and turns the rest
+        # of the block into extra words on the command line - which bash
+        # accepts, and which then runs something that is not the script that
+        # was written.  Nothing inside may use one.
+        lines = read("scripts/build-rootfs.sh").splitlines()
+        openings = [i for i, line in enumerate(lines) if "/bin/bash -Eeuc '" in line]
+        self.assertEqual(len(openings), 1, "expected exactly one chroot payload")
+        start = openings[0]
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].strip() == "'"),
+            None,
+        )
+        self.assertIsNotNone(end, "the chroot payload is never closed")
+        payload = lines[start + 1 : end]
+        self.assertGreater(len(payload), 50, "the chroot payload looks truncated")
+        for offset, line in enumerate(payload, start=start + 2):
+            self.assertNotIn("'", line, f"line {offset} would close the payload early")
 
     def test_runtime_probe_uses_systemd_executable(self):
         script = read("scripts/install-kernel-into-rootfs.sh")
