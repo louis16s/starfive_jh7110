@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# The one implementation of "create or repair the desktop account".
+#
+# Both first-run paths call it - the console setup and, later, the graphical
+# setup - so the account a board ends up with does not depend on which one the
+# user went through, and a board whose desktop cannot start can have its user
+# repaired by running this by hand.
+#
+#   jh7110-account create   <name> [extra-group ...]
+#   jh7110-account check    <name>
+#   jh7110-account validate <name>
+#
+# `validate` is what an interactive prompt calls while the user is still
+# typing: it answers the question "would this name be accepted" without
+# touching the system, so the rules live here rather than in each prompt.
+#
+# `create` reads the password from standard input, one line.  It is never an
+# argument: arguments are visible in `ps` to every process on the board, and
+# this project does not write passwords into files, logs or command lines.
+# The password is not echoed anywhere, not even on failure.
+#
+# `create` is idempotent.  An account that already exists keeps its home
+# directory and its files - the password and the group list are what are
+# brought up to date - so re-running the setup after a failure repairs the
+# account instead of creating a second one.
+set -Eeuo pipefail
+
+# The groups the desktop account needs.  Each one is checked against this
+# system before it is used: a board that does not have one of them (no
+# Bluetooth adapter, no dialup device) must not fail the account creation over
+# a group it would never have used, and a group must never be added blindly.
+readonly DESKTOP_GROUPS=(sudo video render audio netdev plugdev bluetooth dialout)
+
+die() {
+    echo "jh7110-account: $*" >&2
+    exit 1
+}
+
+usage() {
+    die "usage: jh7110-account create <name> [extra-group ...] | check <name> | validate <name>"
+}
+
+# A Debian user name: the same shape useradd accepts, minus the names that are
+# not a person's to take.  `root` is refused outright - the desktop account is
+# never root, and a setup that could be talked into creating it would undo the
+# locked account the image ships.
+validate_name() {
+    local name=$1
+    [[ -n "$name" ]] || die "the user name is empty"
+    [[ ${#name} -le 32 ]] || die "the user name is longer than 32 characters"
+    [[ "$name" =~ ^[a-z_][a-z0-9_-]*$ ]] \
+        || die "use lower-case letters, digits, '_' and '-', starting with a letter or '_'"
+    [[ "$name" != root ]] || die "the desktop account must not be root"
+    if getent passwd "$name" >/dev/null 2>&1; then
+        local uid
+        uid=$(id -u "$name")
+        # An account below the human range is a system account: adopting it
+        # would hand a daemon's identity to a person.
+        [[ "$uid" -ge 1000 ]] || die "$name is a system account (uid $uid)"
+    fi
+}
+
+# Groups that exist on this system, in the order they were asked for, without
+# repeats.  Missing ones are named on stderr so the log says what was skipped.
+resolve_groups() {
+    local group resolved=()
+    for group in "$@"; do
+        if ! getent group "$group" >/dev/null 2>&1; then
+            echo "jh7110-account: skipping group that does not exist: $group" >&2
+            continue
+        fi
+        [[ " ${resolved[*]:-} " == *" $group "* ]] && continue
+        resolved+=("$group")
+    done
+    printf '%s\n' "${resolved[*]:-}"
+}
+
+# Create the account or bring an existing one up to date, then set its
+# password.  Nothing here reads the password back.
+create_account() {
+    local name=$1
+    shift
+    local groups extra
+
+    validate_name "$name"
+    IFS= read -r password || die "no password on standard input"
+    # The prompt in front of this refuses a short password; this is the last
+    # line of defence, because an account with an empty password is worse than
+    # no account at all.
+    [[ -n "$password" ]] || die "refusing to set an empty password"
+
+    extra=$(resolve_groups "${DESKTOP_GROUPS[@]}" "$@")
+    groups=${extra// /,}
+
+    if getent passwd "$name" >/dev/null 2>&1; then
+        # The account exists: this is a repair, not a second account.
+        if [[ -n "$groups" ]]; then
+            usermod --append --groups "$groups" "$name" \
+                || die "could not update the group list of $name"
+        fi
+    else
+        if [[ -n "$groups" ]]; then
+            useradd --create-home --shell /bin/bash --user-group --groups "$groups" "$name" \
+                || die "could not create the account $name"
+        else
+            useradd --create-home --shell /bin/bash --user-group "$name" \
+                || die "could not create the account $name"
+        fi
+    fi
+
+    # chpasswd writes the hash and clears the locked state the image ships in
+    # one step; a separate `passwd --unlock` would only add a way for this to
+    # fail after the password was accepted.
+    if ! printf '%s:%s\n' "$name" "$password" | chpasswd; then
+        unset password
+        die "could not set the password of $name"
+    fi
+    unset password
+
+    check_account "$name" || exit 1
+}
+
+# What the account has to be for the desktop to work: it exists, it owns its
+# home directory, it has a login shell, and it can use sudo.  A setup that
+# reports success without this would be a board with no way in.
+check_account() {
+    local name=$1 home uid groups
+
+    getent passwd "$name" >/dev/null 2>&1 || die "$name does not exist"
+    home=$(getent passwd "$name" | cut -d: -f6)
+    uid=$(id -u "$name")
+    [[ "$uid" -ge 1000 ]] || die "$name has an unexpected uid: $uid"
+    [[ -n "$home" && -d "$home" ]] || die "the home directory of $name is missing: $home"
+    [[ $(stat -c '%u' "$home") == "$uid" ]] \
+        || die "$home is not owned by $name"
+    [[ $(getent passwd "$name" | cut -d: -f7) == /bin/bash ]] \
+        || die "$name does not have a login shell"
+    if getent group sudo >/dev/null 2>&1; then
+        groups=$(id -nG "$name")
+        [[ " $groups " == *' sudo '* ]] || die "$name is not in the sudo group"
+    fi
+    return 0
+}
+
+[[ $# -ge 1 ]] || usage
+action=$1
+shift
+case $action in
+    create)
+        [[ $# -ge 1 ]] || usage
+        [[ $(id -u) -eq 0 ]] || die "must run as root"
+        create_account "$@"
+        ;;
+    check)
+        [[ $# -eq 1 ]] || usage
+        check_account "$1"
+        ;;
+    validate)
+        [[ $# -eq 1 ]] || usage
+        validate_name "$1"
+        ;;
+    *)
+        usage
+        ;;
+esac

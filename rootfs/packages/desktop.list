@@ -1,4 +1,7 @@
 # Default desktop and a lightweight Wayland validation session.
+# The greeter lists the accounts the first-run setup created; accountsservice
+# is where lightdm and the XFCE user panels read them from.
+accountsservice
 blueman
 # Chromium has no Debian Trixie riscv64 binary; report it as an optional WARN.
 dbus-x11

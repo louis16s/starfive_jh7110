@@ -73,18 +73,69 @@ class BootConfig(unittest.TestCase):
         self.assertNotIn("getty@tty1.service", unit["Unit"].get("After", ""))
         script = read("rootfs/overlay/usr/libexec/jh7110-console-setup")
         self.assertIn("chvt 1", script)
-        # The account is unlocked before anything else that can fail, and the
-        # password is measured in characters, not bytes of the C-locale console.
+        # The account is created before anything else that can fail, and the
+        # password is measured in characters rather than bytes, because the
+        # console locale is C and a CJK password would otherwise count double.
         self.assertLess(
-            script.index("setup_root_password\n"), script.index(': > "$DONE_FILE"')
+            script.index("setup_desktop_account\n"), script.index(': > "$DONE_FILE"')
         )
         self.assertNotIn("passwd --unlock root", script)
         self.assertIn("LC_ALL=C.UTF-8 wc -m", script)
+        # One implementation of the account, shared with the graphical setup
+        # and usable by hand on a board that cannot start a desktop.
+        self.assertIn("ACCOUNT_TOOL=/usr/libexec/jh7110-account", script)
+        self.assertIn('"$ACCOUNT_TOOL" create "$user_name"', script)
+        self.assertIn('"$ACCOUNT_TOOL" validate "$name"', script)
         # This path must be able to run on a board whose prepare unit never
         # finished, so it is what completes the machine half.
         self.assertIn("/usr/libexec/jh7110-prepare", script)
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
+
+    def test_root_stays_locked_and_the_desktop_account_has_sudo(self):
+        # The image ships root locked and no human account at all.  The account
+        # the first-run setup creates is the only way in, and it is the one
+        # that can use sudo - so root has to stay unreachable from the greeter,
+        # from sshd and from the tool that creates it.
+        self.assertIn("passwd --lock root", read("scripts/build-rootfs.sh"))
+        account = read("rootfs/overlay/usr/libexec/jh7110-account")
+        self.assertIn(
+            "readonly DESKTOP_GROUPS=(sudo video render audio netdev plugdev bluetooth dialout)",
+            account,
+        )
+        self.assertIn("the desktop account must not be root", account)
+        # A password is never an argument: arguments show up in `ps`, in the
+        # journal and in a shell history, and a password read from standard
+        # input shows up in none of them.
+        self.assertIn("IFS= read -r password", account)
+        self.assertNotIn("--password", account)
+        # chpasswd is the only thing that ever sees it, through a pipe.
+        self.assertIn("| chpasswd", account)
+        # The greeter lists the account the setup created instead of offering a
+        # name box, whose only extra name would be root.
+        lightdm = read("rootfs/overlay/etc/lightdm/lightdm.conf.d/50-jh7110.conf")
+        self.assertIn("greeter-hide-users=false", lightdm)
+        self.assertIn("greeter-show-manual-login=false", lightdm)
+        self.assertNotIn("autologin-user", lightdm)
+        # And sshd refuses root even if a password is ever set for it.  Debian
+        # ships an `Include` at the top of sshd_config, so a drop-in is the
+        # only way to set this without editing a file a package owns.
+        sshd = [
+            line
+            for line in read(
+                "rootfs/overlay/etc/ssh/sshd_config.d/90-jh7110.conf"
+            ).splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        self.assertEqual(sshd, ["PermitRootLogin no"])
+        # The account model is a property of the image, declared in the profile
+        # every board shares and checked before a build starts.
+        common = read("configs/common.conf")
+        self.assertIn("ACCOUNT_MODEL=admin-user", common)
+        self.assertIn("DEFAULT_USER=jh7110", common)
+        self.assertIn("ACCOUNT_MODEL", read("scripts/validate-profile.sh"))
+        # lightdm reads the account list from accountsservice.
+        self.assertIn("accountsservice", read("rootfs/packages/desktop.list"))
 
     def test_hostname_and_hosts_are_written_together(self):
         # The board's name lives in two files, and sudo resolves it through the

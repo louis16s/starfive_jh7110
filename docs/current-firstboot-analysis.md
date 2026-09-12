@@ -310,6 +310,43 @@ host key 用 `ssh-keygen -A`（已存在就跳过）、`growpart` 容忍 1。
   Phase 4 的 GUI OOBE 落地前，它是唯一的建账户路径，桌面没有账户也无法使用。
   Phase 4 用图形设置接管、Phase 5 把它降级为 tty9 fallback 之后，这一条会消失。
 
+### Phase 3（P1）：普通用户模型
+
+提交：`feat(accounts): create sudo user during first setup`
+
+* 新增 `usr/libexec/jh7110-account`，账户的创建/修复/校验只有这一份实现，三个子命令：
+
+  - `validate <name>`：不写系统的名字校验（Debian 用户名规则、禁止 `root`、禁止占用
+    uid < 1000 的系统账户），交互提示边打字边调用，规则因此不在每个提示里复制一遍。
+  - `create <name> [extra-group ...]`：密码从 stdin 读一行；已存在就 `usermod --append`
+    修复而不是再建一个（家目录与文件保留）；`DESKTOP_GROUPS` 里每个组先用
+    `getent group` 确认存在，缺的跳过并在 stderr 说明；最后 `check` 一遍，不通过就不算成功。
+  - `check <name>`：存在、uid ≥ 1000、家目录存在且属主正确（`stat -c '%u'`）、登录
+    shell 是 `/bin/bash`、在 sudo 组里。
+* 密码安全：`printf '%s:%s\n' name password | chpasswd`，密码只经管道；不进 argv
+  （`ps` 可见）、不进文件、不进日志，用完 `unset`。空密码直接拒绝（提示层已拦一次，
+  这是最后一道）。
+* `jh7110-console-setup` 改为询问用户名、两次密码（`LC_ALL=C.UTF-8 wc -m` 按字符数
+  而不是 C locale 下的字节数），然后调用账户工具；不再出现 `passwd --unlock root`。
+  已经存在 sudo 组账户时跳过创建，重复运行不会重建账户。
+* LightDM：`greeter-hide-users=false`（列出可选账户）+ `greeter-show-manual-login=false`
+  （手动输入用户名的唯一额外价值就是 root）。`rootfs/packages/desktop.list` 增加
+  `accountsservice`，greeter 与 XFCE 用户面板的账户列表来自它。
+* SSH：新增 `/etc/ssh/sshd_config.d/90-jh7110.conf`，`PermitRootLogin no`（Debian 的
+  `sshd_config` 首部有 `Include`，drop-in 不需要改包自带的文件）。
+* 镜像：`configs/common.conf` 用 `ACCOUNT_MODEL=admin-user` + `DEFAULT_USER=jh7110`
+  取代 `DEFAULT_USER=root`；`scripts/validate-profile.sh` 校验账户模型、用户名规则与
+  “不是 root”；`scripts/build-rootfs.sh` 把两者写进 `/etc/jh7110/board.conf`，chroot
+  检查里加入 `useradd/usermod/chpasswd/getent` 与 `getent group sudo`。
+* 测试：新增 `tests/test-account.sh`（沙箱用户库 + `getent/id/useradd/usermod/chpasswd/stat`
+  桩）：名字接受/拒绝列表、系统账户不可占用、创建后的 uid/家目录/shell/组、缺组跳过并
+  报告、密码只出现在 `chpasswd` 的 stdin 里、重跑走 `usermod` 且家目录文件保留、
+  空密码/非 root/`useradd` 失败都算失败、`check` 能识别属主错误/无家目录/无 sudo/
+  账户不存在、用法错误。`tests/test-boot-config.py` 增加
+  `test_root_stays_locked_and_the_desktop_account_has_sudo`。
+* 取舍：这一阶段仍在 tty1 询问（GUI OOBE 是 Phase 4），但询问的内容从“root 密码”
+  变成“桌面账户”，root 从此保持 locked。
+
 ### 明确不做
 
 * 不改 boot stack：U-Boot、OpenSBI、kernel、DTB、分区布局、`extlinux.conf`

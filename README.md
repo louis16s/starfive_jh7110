@@ -28,29 +28,44 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 
 ## 默认账户与开机密码
 
-镜像不会写入固定的通用密码。构建时 root 账户保持 locked 状态，首次
-启动会在 HDMI 本地 tty1 显示英文设密界面（Linux 文本控制台不能使用桌面的中文字体）：输入两次不少于 8 位的密码，
-确认后才启动 LightDM。密码只写入目标设备，不会进入 GitHub Actions、
-日志或镜像文件。
+镜像不写入任何固定密码，也不预置可登录的账户：构建时 `passwd --lock root` 把
+root 锁死，首次启动由用户创建一个普通账户，桌面就以这个账户运行。
+
+首次启动会在 HDMI 本地 tty1 显示英文设置界面（Linux 文本控制台没有桌面的中文字体）：
+输入用户名和两次不少于 8 位的密码，确认后才启动 LightDM。密码只经管道交给
+`chpasswd`，不会出现在命令行参数、日志、`/etc/jh7110` 里的任何文件或镜像文件中。
 
 默认账户为：
 
 ~~~text
-用户名：root
+用户名：jh7110（可在设置界面改）
 密码：首次启动时由用户设置
-权限：root
+权限：sudo（sudo/video/render/audio/netdev/plugdev/bluetooth/dialout）
 ~~~
 
-首次启动设密服务完成后，LightDM 允许手动输入用户名，使用 root 登录。
-桌面仍默认中文、Asia/Shanghai（UTC+8）。
+root 保持 locked：它不能从 LightDM 登录（greeter 只列可登录账户，手动输入用户名
+已关闭），也不能通过 SSH 登录（`/etc/ssh/sshd_config.d/90-jh7110.conf` 中
+`PermitRootLogin no`）。需要在串口或恢复 shell 里用 root 时，再按需
+`sudo passwd root` 解锁。桌面仍默认中文、Asia/Shanghai（UTC+8）。
 
 首次启动分成两半：机器自己能做的部分由 `jh7110-prepare.service` 在无终端条件下
 完成（板型 hostname 与 `/etc/hosts`、时区、locale、machine-id、SSH host key、
 rootfs 扩容、硬件报告），它最多运行 5 分钟，失败也不会阻塞 LightDM；需要人的部分
-由 `jh7110-console-setup.service` 在 HDMI tty1 等待设密，没有超时，因为超时杀掉
+由 `jh7110-console-setup.service` 在 HDMI tty1 等待输入，没有超时，因为超时杀掉
 对话框会让设备没有任何可用账户。
 
-如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设密界面
+账户的创建、修复和校验只有一份实现，两条首次启动路径和人工恢复都用它：
+
+~~~sh
+# 校验一个用户名是否可以接受（不写系统）
+/usr/libexec/jh7110-account validate alice
+# 创建或修复账户，密码从标准输入读入
+printf '%s\n' "$password" | sudo /usr/libexec/jh7110-account create alice
+# 检查账户是否真的可用（存在、家目录归属、登录 shell、sudo）
+sudo /usr/libexec/jh7110-account check alice
+~~~
+
+如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设置界面
 （它不会转移到串口）：
 
 ~~~sh
@@ -64,8 +79,8 @@ sudo rm -f /var/lib/jh7110/prepare.done
 sudo jh7110-prepare
 ~~~
 
-不要在公开环境中复用简单密码；root 通过 SSH 登录也应在首次启动后按需
-配置安全策略。
+不要在公开环境中复用简单密码；桌面账户用 sudo 提权，SSH 登录后如需 root 请用
+`sudo`，不要解锁 root 的 SSH 登录。
 
 ## 键盘和鼠标
 
@@ -125,7 +140,7 @@ Chromium 当前没有预装。Debian Trixie riscv64 没有可直接使用的官�
 - UTC 偏移：UTC+08:00
 - 默认 hostname：jh7110-vf2 或 jh7110-mars
 
-首次启动服务会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs。完成后会自动禁用自身。
+`jh7110-prepare.service` 会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs，写完后放下 `/var/lib/jh7110/prepare.done` 自动跳过自身；创建桌面账户的 `jh7110-console-setup.service` 写 `/var/lib/jh7110/oobe.done`。
 
 ## 软件源和大陆网络适配
 
@@ -284,7 +299,7 @@ modesetting 且镜像默认 `AccelMethod none`，软件 GLX 是设计路径。
 
 ## 已知限制
 
-1. root 密码必须在首次启动的 HDMI tty1 设置；串口重启服务也仍然在 HDMI 显示设密界面。启动异常见 [HDMI 启动排查](docs/boot-regression.md)。
+1. 桌面账户必须在首次启动的 HDMI tty1 创建，串口不显示设置界面；串口可用 root（未解锁时先用恢复方式）运行 `jh7110-console-setup` 手工创建。启动异常见 [HDMI 启动排查](docs/boot-regression.md)。
 2. PVR 包已纳入构建，但 HDMI、Wayland、Vulkan、VPU、音频和 USB 键鼠仍需真实硬件验收。
 3. Mars 的 NVMe 默认按能力矩阵报告为 SKIP，不能套用 VisionFive 2 的 NVMe 结论。
 4. Chromium 暂未提供官方 riscv64 Trixie 安装包。

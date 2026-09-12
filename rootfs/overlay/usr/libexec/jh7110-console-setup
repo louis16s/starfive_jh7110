@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # Interactive first-run setup on the console.
 #
-# This is the half of first boot that needs a person: the account the desktop
-# is going to use and the password that protects it.  Everything a machine can
-# do by itself lives in jh7110-prepare, which this runs first when it has not
-# run yet.
+# This is the half of first boot that needs a person: the desktop account and
+# the password that protects it.  Everything a machine can do by itself lives
+# in jh7110-prepare, which this runs first when it has not run yet.
 #
-# It keeps the console for as long as it runs - one virtual terminal, no
-# greeter on top - and it is also the recovery path: after the graphical setup
-# exists, this is what a board falls back to when the desktop cannot start, and
-# it can be run by hand at any time:
+# The image ships with root locked and no human account at all, so this is the
+# path that makes the board usable.  It is also the recovery path: when the
+# graphical setup cannot start - no display, no session, a board reached over
+# the serial console - this still creates or repairs the account:
 #
 #     sudo jh7110-console-setup
 #
-# Remove /var/lib/jh7110/oobe.done to run it again on the next boot.
+# Remove /var/lib/jh7110/oobe.done to let it run again on the next boot.
 set -Eeuo pipefail
 
 readonly STATE_DIR=/var/lib/jh7110
 readonly BOARD_CONFIG=/etc/jh7110/board.conf
 readonly DONE_FILE="$STATE_DIR/oobe.done"
+readonly ACCOUNT_TOOL=/usr/libexec/jh7110-account
 
 die() {
     echo "jh7110-console-setup: $*" >&2
@@ -44,81 +44,125 @@ if [[ ! -e "$STATE_DIR/prepare.done" && -x /usr/libexec/jh7110-prepare ]]; then
         || jh7110_log "machine preparation failed; continuing with the account setup"
 fi
 
-setup_root_password() {
-    local password confirmation state
-    # Linux VT fonts cannot render the desktop's CJK fonts. Use readable
-    # console text; the installed desktop keeps its Chinese locale.
-    local LC_ALL=C
-    export LC_ALL TERM=linux
+# The console locale is C so the Linux VT font can render the dialogs: the
+# desktop's CJK fonts do not exist in a text console.
+export LC_ALL=C TERM=linux
 
-    [[ "${DEFAULT_USER:-root}" == root ]] || die "only root default user is supported"
-    state=$(passwd -S root | awk '{print $2}')
-    case "$state" in
-        P)
-            return
-            ;;
-        L|LK|NP)
-            ;;
-        *)
-            die "cannot determine root password state: $state"
-            ;;
-    esac
+[[ -x "$ACCOUNT_TOOL" ]] || die "missing $ACCOUNT_TOOL"
+command -v whiptail >/dev/null 2>&1 || die "whiptail is required for the console setup"
 
-    chvt 1 || die "cannot activate setup console tty1"
+ask() { # $1 title, $2 prompt, $3 default
+    whiptail --title "$1" --inputbox "$2" 10 64 "${3:-}" 3>&1 1>&2 2>&3
+}
 
-    command -v whiptail >/dev/null 2>&1 \
-        || die "whiptail is required for first-boot password setup"
+complain() { # $1 title, $2 message
+    whiptail --title "$1" --msgbox "$2" 10 64
+}
 
+# A password typed twice, measured in characters rather than bytes: under the C
+# console locale ${#password} counts bytes, and a three-character CJK password
+# would pass an eight-character minimum.  The value is only ever handed to
+# chpasswd over a pipe by jh7110-account; it is not written down anywhere.
+ask_password() { # $1 user name
+    local password confirmation length
     while :; do
-        password=$(whiptail \
-            --title "JH7110 first boot" \
-            --passwordbox "Set the root password (at least 8 characters):" \
-            10 72 3>&1 1>&2 2>&3) || die "password setup cancelled"
-        confirmation=$(whiptail \
-            --title "JH7110 first boot" \
-            --passwordbox "Confirm the root password:" \
-            10 72 3>&1 1>&2 2>&3) || die "password confirmation cancelled"
+        password=$(whiptail --title "Set the password for $1" \
+            --passwordbox "Password for $1 (at least 8 characters):" \
+            10 64 3>&1 1>&2 2>&3) || die "password setup cancelled"
+        confirmation=$(whiptail --title "Set the password for $1" \
+            --passwordbox "Repeat the password:" \
+            10 64 3>&1 1>&2 2>&3) || die "password confirmation cancelled"
 
-        # The console locale is C so the Linux VT font can render the dialog,
-        # and under C ${#password} counts bytes: a three-character CJK password
-        # would satisfy an eight-character minimum.  Count characters instead.
-        password_length=$(printf '%s' "$password" | LC_ALL=C.UTF-8 wc -m)
-        if (( password_length < 8 )); then
-            whiptail --title "Password too short" \
-                --msgbox "Use at least 8 characters." 8 60
+        length=$(printf '%s' "$password" | LC_ALL=C.UTF-8 wc -m)
+        if (( length < 8 )); then
+            complain "Password too short" "Use at least 8 characters."
             continue
         fi
         if [[ "$password" != "$confirmation" ]]; then
-            whiptail --title "Passwords differ" \
-                --msgbox "Please enter matching passwords." 8 60
+            complain "Passwords differ" "Please enter matching passwords."
             continue
         fi
-        # chpasswd writes a hash, which already clears the locked state the
-        # image ships with; a separate `passwd --unlock` would only add a way
-        # for this step to fail after the password has been accepted.
-        if ! printf 'root:%s\n' "$password" | chpasswd; then
-            unset password confirmation
-            die "failed to set root password"
-        fi
-        unset password confirmation
-        echo "Password configured. Starting the desktop."
         break
     done
+    unset confirmation
+    printf '%s' "$password"
 }
 
-# Prompt for the password before anything else that can fail.  The image is
-# built with a locked root account, so every later step in this script - an
-# invalid timezone in board.conf, a partition table that cannot be grown - is a
-# step that would otherwise strand the user on a login prompt with no usable
-# account.  setup_root_password returns immediately once a password is set, so
-# re-running this service after a later failure does not ask twice.
-setup_root_password
+ask_user_name() {
+    local name
+    while :; do
+        name=$(ask "Desktop account" \
+            "User name for the desktop (the account that uses sudo):" \
+            "${DEFAULT_USER:-jh7110}") || die "user name prompt cancelled"
+        if "$ACCOUNT_TOOL" validate "$name" 2>/dev/null; then
+            break
+        fi
+        complain "User name not accepted" \
+            "Use lower-case letters, digits, '_' and '-', starting with a letter or '_'. The name 'root' cannot be used."
+    done
+    printf '%s' "$name"
+}
 
-# The name is prepared by the machine half, but a board that never got that far
-# still has to answer to something a person can type, and the console is where
-# the user is asked about it.
-jh7110_set_system_hostname "$(jh7110_default_hostname)" \
-    || die "could not set the system hostname"
+ask_hostname() {
+    local name
+    while :; do
+        name=$(ask "Device name" "Hostname for this board:" \
+            "$(jh7110_default_hostname)") || die "hostname prompt cancelled"
+        if jh7110_hostname_validate "$name" 2>/dev/null; then
+            break
+        fi
+        complain "Device name not accepted" \
+            "Use letters, digits and '-', at most 63 characters."
+    done
+    printf '%s' "$name"
+}
 
+# An account that can use sudo is what this step is for; one already there
+# means the setup has been through this board, and asking again would only be
+# a way to lock the user out of their own files.
+existing_account() {
+    local members
+    getent group sudo >/dev/null 2>&1 || return 1
+    members=$(getent group sudo | cut -d: -f4)
+    [[ -n "$members" ]] || return 1
+    printf '%s' "${members%%,*}"
+}
+
+setup_desktop_account() {
+    local password user_name
+    if user_name=$(existing_account); then
+        echo "Account $user_name already exists; nothing to create."
+        return 0
+    fi
+
+    chvt 1 || die "cannot activate the setup console tty1"
+
+    user_name=$(ask_user_name)
+    password=$(ask_password "$user_name")
+
+    # The account tool is the one implementation of this: it validates again,
+    # adds only the groups this system actually has, and verifies what it
+    # created.  The password goes in over a pipe, never as an argument.
+    if ! printf '%s\n' "$password" | "$ACCOUNT_TOOL" create "$user_name"; then
+        unset password
+        die "could not create the desktop account $user_name"
+    fi
+    unset password
+
+    echo "Desktop account $user_name created."
+}
+
+setup_desktop_account
+
+# The name is written by the machine half as well, but a board that never got
+# that far still has to answer to something a person can type, and the console
+# is where the user is asked about it.
+device_name=$(ask_hostname)
+jh7110_set_system_hostname "$device_name" \
+    || die "could not set the system hostname to $device_name"
+unset device_name
+
+# Written last: the board now has an account and a name, so the next boot can
+# go straight to the greeter.
 : > "$DONE_FILE"
 echo "Setup complete. Starting the desktop."

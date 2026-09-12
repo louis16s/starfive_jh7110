@@ -88,7 +88,8 @@ done
 
 rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
 chmod 0755 "$rootfs_dir/usr/libexec/jh7110-prepare" \
-    "$rootfs_dir/usr/libexec/jh7110-console-setup"
+    "$rootfs_dir/usr/libexec/jh7110-console-setup" \
+    "$rootfs_dir/usr/libexec/jh7110-account"
 
 install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
@@ -99,6 +100,7 @@ TIMEZONE=$TIMEZONE
 DEFAULT_LOCALE=$DEFAULT_LOCALE
 DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 SUPPORTED_LOCALES='$SUPPORTED_LOCALES'
+ACCOUNT_MODEL=$ACCOUNT_MODEL
 DEFAULT_USER=$DEFAULT_USER
 EOF
 
@@ -223,9 +225,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             fi
         done
         # Validate target binaries and desktop payload before assembling an image.
-        for helper in chvt whiptail growpart resize2fs lsblk; do
+        for helper in chvt whiptail growpart resize2fs lsblk \
+            useradd usermod chpasswd getent; do
             command -v "$helper" >/dev/null
         done
+        # The desktop account is created by the first-run setup, so the group
+        # it uses to become an administrator has to exist in the image.
+        getent group sudo >/dev/null
         # nft opens a NETLINK_NETFILTER socket even for a dry run, and QEMU
         # user-mode does not provide one, so the checker itself cannot start
         # there.  Only a real ruleset error may fail the build.

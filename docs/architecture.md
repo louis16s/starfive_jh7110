@@ -229,6 +229,16 @@ board whose preparation never finished, and it is the recovery path for a board
 whose graphical setup cannot start. It is skipped once
 `/var/lib/jh7110/oobe.done` exists.
 
+The account it creates is the image's only human account. Root ships locked
+(`passwd --lock root`), the greeter lists accounts rather than offering a name
+box, and `PermitRootLogin no` in `/etc/ssh/sshd_config.d/90-jh7110.conf` keeps
+root off sshd, so the account that uses sudo is the only way in. Creating,
+repairing and checking it is one tool, `/usr/libexec/jh7110-account`: the
+console setup and the graphical setup call the same one, and a board whose
+desktop cannot start can have its account repaired by hand. The password is read
+from standard input and handed to `chpasswd` over a pipe - never an argument,
+because arguments are visible in `ps`, in the journal and in a shell history.
+
 `jh7110-info` is an installed read-only report; `jh7110-config` and
 `jh7110-selftest` are not implemented yet. A report tool reads board identity
 from the DT `compatible`/`model`, kernel and firmware metadata, and never infers

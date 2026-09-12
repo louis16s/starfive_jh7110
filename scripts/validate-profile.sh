@@ -41,7 +41,7 @@ fi
 for required in \
     PROJECT_NAME BOARD_NAME BOARD_VENDOR TARGET_ARCH \
     SOURCE_LOCK SOURCE_ROOT OUTPUT_ROOT \
-    BOOT_FILESYSTEM ROOT_FILESYSTEM DEFAULT_USER \
+    BOOT_FILESYSTEM ROOT_FILESYSTEM ACCOUNT_MODEL DEFAULT_USER \
     IMAGE_BASENAME BOOT_PARTITION_LABEL ROOT_PARTITION_LABEL \
     KERNEL_PACKAGE_VERSION ROOT_DEVICE_POLICY NVME_POLICY EMMC_POLICY; do
     [[ -n "${!required:-}" ]] || die "$required is empty"
@@ -114,6 +114,19 @@ jh7110_hostname_validate "$DEFAULT_HOSTNAME" \
     || die "DEFAULT_HOSTNAME is not a valid hostname: $DEFAULT_HOSTNAME"
 [[ "$DEFAULT_HOSTNAME" == "jh7110-$board_image_token" ]] \
     || die "DEFAULT_HOSTNAME must be jh7110-$board_image_token: $DEFAULT_HOSTNAME"
+
+# The account model is what the first-run setup implements: one normal user
+# with sudo, and root left locked.  DEFAULT_USER is the name that setup offers
+# - the rules match the ones jh7110-account enforces on the board, so a
+# profile cannot propose a name the board would refuse.
+[[ "$ACCOUNT_MODEL" == admin-user ]] \
+    || die "unsupported ACCOUNT_MODEL: $ACCOUNT_MODEL"
+[[ "$DEFAULT_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] \
+    || die "DEFAULT_USER is not a valid user name: $DEFAULT_USER"
+[[ ${#DEFAULT_USER} -le 32 ]] \
+    || die "DEFAULT_USER is longer than 32 characters: $DEFAULT_USER"
+[[ "$DEFAULT_USER" != root ]] \
+    || die "DEFAULT_USER must not be root; the desktop account is a normal user"
 
 for policy_name in ROOT_DEVICE_POLICY NVME_POLICY EMMC_POLICY; do
     case ${!policy_name} in
