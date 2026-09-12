@@ -317,12 +317,28 @@ fi
 [[ -f "$sandbox/state/prepare.done" ]] && fail 'a non-root run marked the board prepared'
 
 # The locale tools are not what makes the board reachable: a board without them
-# still has to come up with its own name and its own filesystem grown.
+# still has to come up with its own name and its own filesystem grown.  They are
+# absent by being absent from PATH, which is how a board that does not have them
+# looks to the script - a host that happens to have them installed would
+# otherwise be found further along the path and answer for a board that has not.
+bare_path() {
+    local dir="$sandbox/bare" tool
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    # bash is in the list because the stubs are `#!/usr/bin/env bash` scripts:
+    # a path without it is one where nothing the sandbox provides can run.
+    for tool in awk bash basename cat chmod cut date dirname grep head install \
+        ln mktemp mv rm sed sort tr uname; do
+        ln -s "$(command -v "$tool")" "$dir/$tool"
+    done
+    printf '%s' "$dir"
+}
+
 reset
 mv "$sandbox/bin/locale-gen" "$sandbox/bin/locale-gen.hidden"
 mv "$sandbox/bin/update-locale" "$sandbox/bin/update-locale.hidden"
-if ! run_prepare > /dev/null 2>&1; then
-    fail 'a board without the locale tools was left unprepared'
+if ! PATH="$sandbox/bin:$(bare_path)" run_prepare > /dev/null 2> "$sandbox/stderr"; then
+    fail "a board without the locale tools was left unprepared: $(cat "$sandbox/stderr")"
 fi
 mv "$sandbox/bin/locale-gen.hidden" "$sandbox/bin/locale-gen"
 mv "$sandbox/bin/update-locale.hidden" "$sandbox/bin/update-locale"
