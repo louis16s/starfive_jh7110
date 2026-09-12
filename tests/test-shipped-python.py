@@ -44,12 +44,17 @@ class ShippedPython(unittest.TestCase):
         self.assertNotIn("Gtk", module)
 
     def test_the_overlay_carries_no_bytecode(self):
+        # The suite itself runs with bytecode writing turned off (the `check`
+        # target says why), so anything found here was left by a command run by
+        # hand - `compileall` is the usual one.  The build filters bytecode out
+        # of the image, but the overlay is meant to hold exactly what the image
+        # ships: a stray file is one nobody can account for later.
         stale = sorted(
             str(path.relative_to(ROOT))
             for path in (ROOT / "rootfs/overlay").rglob("*")
             if path.name == "__pycache__" or path.suffix == ".pyc"
         )
-        self.assertEqual(stale, [], "the image would carry bytecode nothing can use")
+        self.assertEqual(stale, [], "remove the bytecode the overlay carries")
 
 
 if __name__ == "__main__":

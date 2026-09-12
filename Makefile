@@ -10,6 +10,14 @@ UBOOT_SOURCE := $(shell bash -c 'source "board/$(BOARD)/profile.conf" >/dev/null
 
 .PHONY: check profile verify-sources host-check fetch kernel uboot opensbi gpu-package rootfs install-kernel image compress manifest
 
+# Two of the tests import the Python the image ships, and a stock CPython writes
+# bytecode beside the source it imports.  The overlay is what the image is built
+# from, so the whole suite runs without writing any; macOS hides this by keeping
+# bytecode in a per-user cache, which is why it only shows up on the machine
+# that builds the image.  tests/test-shipped-python.py is what catches a tree
+# that carries bytecode anyway.
+check: export PYTHONDONTWRITEBYTECODE = 1
+
 check:
 	bash tests/test-hostname.sh
 	bash tests/test-account.sh

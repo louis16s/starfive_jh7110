@@ -35,6 +35,10 @@ BIN_DIR = os.path.join(REPO, "rootfs/overlay/usr/bin")
 WIZARD_SOURCE = os.path.join(BIN_DIR, "jh7110-oobe")
 
 sys.path.insert(0, LIB_DIR)
+# The import below is of the module the image ships, and a stock CPython writes
+# bytecode beside the source it imports - which here is the tree the image is
+# built from.  Running a test must not change what it is testing.
+sys.dont_write_bytecode = True
 import oobe  # noqa: E402
 
 

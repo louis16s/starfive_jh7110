@@ -127,6 +127,9 @@ os.environ["JH7110_OOBE_SOCKET"] = str(ROOT / "run/jh7110/oobe.sock")
 
 
 def load_backend():
+    # Loading the module is what writes bytecode beside it on a stock CPython,
+    # and beside it is the overlay the image is built from.
+    sys.dont_write_bytecode = True
     loader = importlib.machinery.SourceFileLoader("jh7110_oobe_backend", str(BACKEND))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
