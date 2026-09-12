@@ -1,0 +1,1143 @@
+#!/usr/bin/python3
+"""The first-run window.
+
+This file draws; it does not decide.  Every rule the wizard applies lives in
+/usr/lib/jh7110/oobe.py - the module the tests drive - and every change to the
+machine goes through the privileged backend over its socket.  What is here is
+the layout, the buttons, and the threads that keep a slow network from freezing
+the window.
+
+It runs as the greeter account, never as root: the greeter wrapper starts it in
+place of the login screen while the setup is unfinished.  Nothing it does needs
+more privilege than that, because the backend holds the privilege.
+
+  jh7110-oobe           run the setup
+  jh7110-oobe --reset   let the next session run it again (as root)
+  jh7110-oobe --check   say whether the graphical stack is usable, and exit
+"""
+import argparse
+import os
+import sys
+import threading
+import traceback
+
+# The rules live here on the board; the tests point this at the checkout.  The
+# import is the one place the wizard can fail before there is a window to
+# complain in, so it says what is missing rather than raising ImportError.
+LIB_DIR = os.environ.get("JH7110_LIB") or "/usr/lib/jh7110"
+sys.path.insert(0, LIB_DIR)
+try:
+    import oobe  # noqa: E402 - the path has to be set before this import
+except ImportError as error:
+    print("jh7110-oobe: 找不到向导模块 %s/oobe.py（%s）" % (LIB_DIR, error), file=sys.stderr)
+    raise SystemExit(1)
+
+LOG_FILE = "/var/log/jh7110-oobe.log"
+
+# The graphical stack is imported once, by load_gtk, so that a board without it
+# gets a sentence instead of an ImportError.  Everything below uses these names.
+Gtk = None
+Gdk = None
+GLib = None
+Pango = None
+
+# The pages, in the order the user walks through them.  The names are also the
+# CSS classes of the step chips at the top.
+STEPS = [
+    ("welcome", "欢迎"),
+    ("network", "网络"),
+    ("hostname", "设备名称"),
+    ("user", "用户"),
+    ("region", "地区"),
+    ("ssh", "SSH"),
+    ("updates", "更新"),
+    ("hardware", "硬件"),
+    ("confirm", "确认"),
+    ("finish", "完成"),
+]
+STEP_INDEX = {name: index for index, (name, _label) in enumerate(STEPS)}
+
+CSS = """
+window, .oobe-root { background-color: #f6f9fa; }
+* { font-family: "Noto Sans CJK SC", "Noto Sans", "DejaVu Sans", sans-serif; }
+
+.oobe-header { background-color: #ffffff; border-bottom: 1px solid #dfe7ea; padding: 16px 28px 12px 28px; }
+.oobe-title { font-size: 16pt; font-weight: bold; color: #17323a; }
+.oobe-subtitle { color: #64757d; }
+.oobe-footer { background-color: #ffffff; border-top: 1px solid #dfe7ea; padding: 12px 28px; }
+
+.oobe-chip { padding: 3px 10px; border-radius: 9px; font-size: 9pt; color: #7b8b93; background-color: #eef2f4; }
+.oobe-chip.done { background-color: #d8ecea; color: #0d6b68; }
+.oobe-chip.active { background-color: #128a86; color: #ffffff; }
+
+.oobe-h1 { font-size: 18pt; font-weight: bold; color: #17323a; }
+.oobe-h2 { font-size: 11pt; font-weight: bold; color: #17323a; }
+.oobe-text { color: #33454c; }
+.oobe-hint { color: #64757d; font-size: 10pt; }
+.oobe-error { color: #b3261e; }
+.oobe-good { color: #0d6b68; }
+.oobe-badge { padding: 2px 8px; border-radius: 8px; font-size: 9pt; background-color: #eef2f4; color: #4a5c64; }
+.oobe-badge.ok { background-color: #d8ecea; color: #0d6b68; }
+.oobe-badge.warn { background-color: #fdf0d5; color: #8a5b00; }
+.oobe-badge.bad { background-color: #fbe1e0; color: #b3261e; }
+.oobe-card { background-color: #ffffff; border: 1px solid #e3eaed; border-radius: 8px; padding: 16px; }
+
+button { padding: 7px 16px; }
+button.suggested-action { background-image: none; background-color: #128a86; color: #ffffff; border: none; text-shadow: none; }
+button.suggested-action:hover { background-color: #0f7a76; }
+button.suggested-action:disabled { background-color: #9dc6c4; color: #f0f6f6; }
+button:disabled { color: #9aa8ae; }
+entry { padding: 6px 8px; }
+"""
+
+
+def log(message):
+    """Write one line to the GUI log and to stderr, which is the journal.
+
+    No secret is ever passed here.  The password this program handles reaches
+    neither this function nor any file nor any command line.
+    """
+    line = "jh7110-oobe: %s" % message
+    print(line, file=sys.stderr)
+    try:
+        with open(LOG_FILE, "a") as stream:
+            stream.write(line + "\n")
+    except OSError:
+        pass
+
+
+def load_gtk():
+    """Import GTK 3 and its companions.  Returns None, or why it failed."""
+    global Gtk, Gdk, GLib, Pango
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gdk, GLib, Gtk, Pango
+    except (ImportError, ValueError) as error:
+        return str(error)
+    return None
+
+
+def check_stack():
+    """Whether the graphical stack can run at all, without opening a display."""
+    error = load_gtk()
+    if error:
+        print("jh7110-oobe: GTK 3 is not available: %s" % error)
+        return 1
+    if not os.path.exists(os.path.join(LIB_DIR, "oobe.py")):
+        print("jh7110-oobe: the wizard module %s/oobe.py is missing" % LIB_DIR)
+        return 1
+    print("jh7110-oobe: python3-gi, GTK 3 and the wizard module are available")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="jh7110-oobe", description="JH7110 首次启动设置向导"
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="清除设置完成的标记，让下次启动重新运行向导（需要 root）",
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="检查图形环境是否可用后退出（构建期验证）"
+    )
+    parser.add_argument("--state-dir", default=oobe.STATE_DIR, help=argparse.SUPPRESS)
+    arguments = parser.parse_args()
+
+    if arguments.check:
+        return check_stack()
+
+    if arguments.reset:
+        if os.geteuid() != 0:
+            print("jh7110-oobe: 请用 sudo 运行：sudo jh7110-oobe --reset", file=sys.stderr)
+            return 1
+        removed = oobe.reset(arguments.state_dir)
+        for path in removed:
+            print("jh7110-oobe: 已删除 %s" % path)
+        if not removed:
+            print("jh7110-oobe: 本来就没有完成标记，下次启动仍会运行向导")
+        print("jh7110-oobe: 已经存在的账户不会被删除，向导会修复它而不是新建一个")
+        return 0
+
+    error = load_gtk()
+    if error:
+        print("jh7110-oobe: 图形界面不可用（%s）" % error, file=sys.stderr)
+        print(
+            "jh7110-oobe: 可以在 tty9 上用命令行完成最小设置"
+            "（sudo systemctl start jh7110-console-setup，或直接在串口上运行"
+            " sudo jh7110-console-setup）",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        Wizard().run()
+    except Exception:  # noqa: BLE001 - the traceback has to reach the log
+        log("the wizard stopped on an unexpected error:\n" + traceback.format_exc())
+        return 1
+    return 0
+
+
+class Wizard:
+    """The window, its pages, and the small amount of state they share."""
+
+    def __init__(self):
+        self.backend = oobe.Backend()
+        self.session = None
+        self.board = {}
+        self.busy = False
+        self.current = STEPS[0][0]
+        self.pulse_timer = None
+        self.finish_started = False
+        self.finish_done = False
+
+        self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        self.window.set_title("JH7110 首次启动设置")
+        self.window.set_position(Gtk.WindowPosition.CENTER)
+        self.window.connect("destroy", Gtk.main_quit)
+        self.window.connect("delete-event", self.on_delete)
+        self.fit_to_screen()
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.get_style_context().add_class("oobe-root")
+        self.window.add(root)
+        root.pack_start(self.build_header(), False, False, 0)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.stack.set_transition_duration(180)
+        root.pack_start(self.stack, True, True, 0)
+        root.pack_start(self.build_footer(), False, False, 0)
+
+        for name, _label in STEPS:
+            page = self.scrollable(getattr(self, "page_" + name)())
+            self.stack.add_named(page, name)
+
+        self.show_step("welcome")
+        self.connect_backend()
+
+    def run(self):
+        self.window.show_all()
+        Gtk.main()
+
+    # ------------------------------------------------------------------ layout
+    def fit_to_screen(self):
+        """Never open bigger than the display: 1024x600 boards are the target."""
+        width, height = 1024, 600
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            width, height = screen.get_width(), screen.get_height()
+        self.window.set_default_size(
+            min(1000, max(720, width - 80)), min(660, max(480, height - 100))
+        )
+        self.window.set_size_request(640, 420)
+
+    def build_header(self):
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        header.get_style_context().add_class("oobe-header")
+
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title = Gtk.Label(label="JH7110 首次启动设置", xalign=0)
+        title.get_style_context().add_class("oobe-title")
+        titles.pack_start(title, False, False, 0)
+        self.subtitle = Gtk.Label(label="正在准备…", xalign=0)
+        self.subtitle.get_style_context().add_class("oobe-subtitle")
+        titles.pack_start(self.subtitle, False, False, 0)
+        header.pack_start(titles, False, False, 0)
+
+        chips = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.chip_labels = {}
+        for name, label in STEPS:
+            chip = Gtk.Label(label=label)
+            chip.get_style_context().add_class("oobe-chip")
+            self.chip_labels[name] = chip
+            chips.pack_start(chip, False, False, 0)
+        header.pack_start(chips, False, False, 0)
+        return header
+
+    def build_footer(self):
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        footer.get_style_context().add_class("oobe-footer")
+
+        self.status = Gtk.Label(label="", xalign=0)
+        self.status.set_line_wrap(True)
+        footer.pack_start(self.status, True, True, 0)
+
+        self.back_button = Gtk.Button(label="上一步")
+        self.back_button.connect("clicked", self.on_back)
+        footer.pack_start(self.back_button, False, False, 0)
+
+        self.next_button = Gtk.Button(label="下一步")
+        self.next_button.get_style_context().add_class("suggested-action")
+        self.next_button.set_can_default(True)
+        self.next_button.set_sensitive(False)
+        self.next_button.connect("clicked", self.on_next)
+        footer.pack_start(self.next_button, False, False, 0)
+        self.window.set_default(self.next_button)
+        return footer
+
+    def scrollable(self, content):
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        margin = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        margin.set_border_width(24)
+        margin.pack_start(content, True, True, 0)
+        scroller.add(margin)
+        return scroller
+
+    def page_box(self, title, subtitle=""):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        heading = Gtk.Label(label=title, xalign=0)
+        heading.get_style_context().add_class("oobe-h1")
+        heading.set_line_wrap(True)
+        box.pack_start(heading, False, False, 0)
+        if subtitle:
+            hint = Gtk.Label(label=subtitle, xalign=0)
+            hint.get_style_context().add_class("oobe-hint")
+            hint.set_line_wrap(True)
+            box.pack_start(hint, False, False, 0)
+        return box
+
+    def labelled(self, label, widget, hint=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        text = Gtk.Label(label=label, xalign=0)
+        text.get_style_context().add_class("oobe-text")
+        row.pack_start(text, False, False, 0)
+        row.pack_start(widget, False, False, 0)
+        if hint:
+            note = Gtk.Label(label=hint, xalign=0)
+            note.get_style_context().add_class("oobe-hint")
+            note.set_line_wrap(True)
+            row.pack_start(note, False, False, 0)
+        return row
+
+    def entry(self, placeholder=""):
+        widget = Gtk.Entry()
+        if placeholder:
+            widget.set_placeholder_text(placeholder)
+        widget.set_activates_default(True)
+        return widget
+
+    def secret_entry(self, placeholder=""):
+        widget = self.entry(placeholder)
+        widget.set_visibility(False)
+        widget.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        return widget
+
+    def text_label(self, text, style="oobe-text"):
+        label = Gtk.Label(label=text, xalign=0)
+        label.get_style_context().add_class(style)
+        label.set_line_wrap(True)
+        return label
+
+    def badge(self, text, style=""):
+        label = Gtk.Label(label=text)
+        label.get_style_context().add_class("oobe-badge")
+        if style:
+            label.get_style_context().add_class(style)
+        return label
+
+    # ------------------------------------------------------------- navigation
+    def show_step(self, name):
+        self.current = name
+        self.stack.set_visible_child_name(name)
+        for step, _label in STEPS:
+            context = self.chip_labels[step].get_style_context()
+            context.remove_class("active")
+            context.remove_class("done")
+            if step == name:
+                context.add_class("active")
+            elif STEP_INDEX[step] < STEP_INDEX[name]:
+                context.add_class("done")
+        handler = getattr(self, "shown_" + name, None)
+        if handler is not None:
+            handler()
+
+    def goto(self, offset):
+        index = max(0, min(len(STEPS) - 1, STEP_INDEX[self.current] + offset))
+        self.show_step(STEPS[index][0])
+
+    def on_back(self, _button):
+        if self.busy:
+            return
+        self.set_status("")
+        self.goto(-1)
+
+    def on_next(self, _button):
+        if self.busy:
+            return
+        if self.current == "finish":
+            if self.finish_done:
+                self.window.destroy()
+            else:
+                self.start_finalize()
+            return
+        checker = getattr(self, "leave_" + self.current, None)
+        if checker is not None and not checker():
+            return
+        self.set_status("")
+        self.goto(1)
+
+    def on_delete(self, *_args):
+        log("the wizard window was closed")
+        Gtk.main_quit()
+        return False
+
+    def set_status(self, message, style="oobe-hint"):
+        context = self.status.get_style_context()
+        for name in ("oobe-hint", "oobe-error", "oobe-good"):
+            context.remove_class(name)
+        context.add_class(style)
+        self.status.set_text(message)
+
+    def set_busy(self, busy, message=""):
+        self.busy = busy
+        self.next_button.set_sensitive(not busy)
+        if message:
+            self.set_status(message)
+
+    def error_dialog(self, title, message):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+
+    def in_background(self, work, done):
+        """Run `work` off the main loop and hand its result to `done`.
+
+        The window stays responsive while a network scan or a package of file
+        writes is slow, and an exception inside `work` comes back as a message
+        instead of a traceback on a console nobody is looking at.
+        """
+
+        def runner():
+            try:
+                result, error = work(), None
+            except Exception as exception:  # noqa: BLE001 - it is shown to the user
+                result, error = None, str(exception) or exception.__class__.__name__
+            GLib.idle_add(done, result, error)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    # ----------------------------------------------------------- page: welcome
+    def page_welcome(self):
+        box = self.page_box(
+            "欢迎使用 JH7110 桌面",
+            "接下来会创建你的用户账户，并完成设备名称、区域和网络的基本设置。",
+        )
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        info.get_style_context().add_class("oobe-card")
+        self.welcome_state = self.text_label("正在连接设置服务…", "oobe-hint")
+        info.pack_start(self.welcome_state, False, False, 0)
+        self.welcome_detail = self.text_label("", "oobe-hint")
+        self.welcome_detail.set_visible(False)
+        info.pack_start(self.welcome_detail, False, False, 0)
+        box.pack_start(info, False, False, 0)
+
+        steps = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        for text in (
+            "1. 网络：可选，有线或无线都可以，也可以稍后再连接",
+            "2. 设备名称：默认值来自主板，可以修改",
+            "3. 用户账户：创建一个属于你的管理员账户（root 保持锁定）",
+            "4. 区域设置：语言、时区、键盘布局",
+            "5. SSH：默认开启，root 登录始终被拒绝",
+            "6. 硬件检测：结果只保存在本机，用于排查问题",
+        ):
+            steps.pack_start(self.text_label(text), False, False, 0)
+        box.pack_start(steps, False, False, 0)
+
+        self.welcome_error = self.text_label("", "oobe-error")
+        self.welcome_error.set_visible(False)
+        box.pack_start(self.welcome_error, False, False, 0)
+
+        retry = Gtk.Button(label="重新连接设置服务")
+        retry.connect("clicked", lambda _button: self.connect_backend())
+        retry.set_visible(False)
+        self.retry_button = retry
+        box.pack_start(retry, False, False, 0)
+        return box
+
+    def connect_backend(self):
+        self.set_busy(True, "正在连接设置服务…")
+        self.welcome_state.set_text("正在连接设置服务…")
+        self.welcome_detail.set_visible(False)
+        self.welcome_error.set_visible(False)
+        self.retry_button.set_visible(False)
+
+        def work():
+            # Ping first: it is the one call that says whether the service is
+            # there at all, before the window fills itself with its answers.
+            self.backend.ping()
+            return self.backend.get_board(), self.backend.get_state()
+
+        self.in_background(work, self.backend_ready)
+
+    def backend_ready(self, result, error):
+        if error:
+            log("the setup service is not reachable: %s" % error)
+            self.welcome_state.set_text("无法连接设置服务")
+            self.welcome_error.set_text(
+                "设置服务没有响应（%s）。可以按 Ctrl+Alt+F9 切到命令行完成最小设置，"
+                "也可以在修复后点击下面的按钮重试。" % error
+            )
+            self.welcome_error.set_visible(True)
+            self.retry_button.set_visible(True)
+            self.set_busy(False, "")
+            # There is nothing to move on to until the service answers.
+            self.next_button.set_sensitive(False)
+            return
+        board, state = result
+        self.board = board
+        self.session = oobe.SetupSession(self.backend, board)
+        self.subtitle.set_text(
+            "%s · %s" % (board.get("board_name") or "JH7110", board.get("board_id") or "未知主板")
+        )
+        self.welcome_state.set_text("设置服务已就绪：%s" % (board.get("board_name") or "JH7110"))
+        self.welcome_detail.set_text(
+            "默认设备名称 %s，默认账户 %s。"
+            % (board.get("default_hostname") or "-", board.get("default_user") or "-")
+        )
+        self.welcome_detail.set_visible(True)
+        if state.get("finalized"):
+            self.welcome_error.set_text(
+                "这台设备已经完成过一次设置。若确实要重来，请先执行 "
+                "sudo jh7110-oobe --reset，然后重新登录。"
+            )
+            self.welcome_error.set_visible(True)
+            self.set_busy(False, "")
+            self.next_button.set_sensitive(False)
+            return
+        self.prefill()
+        self.set_busy(False, "")
+        self.next_button.set_sensitive(True)
+        self.next_button.grab_focus()
+
+    def prefill(self):
+        """Put the board's own defaults in the fields before the user sees them."""
+        self.hostname_entry.set_text(self.session.hostname)
+        self.username_entry.set_text(self.session.username)
+        self.display_entry.set_text(self.session.username)
+        self.select_locale(self.session.locale)
+        self.select_timezone(self.session.timezone)
+        self.select_keymap(self.session.keymap)
+        self.refresh_network()
+        self.start_hardware_check()
+
+    # ----------------------------------------------------------- page: network
+    def page_network(self):
+        box = self.page_box(
+            "网络连接",
+            "网络不是必须的：跳过这一步，系统一样可以完成设置并进入桌面。",
+        )
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.network_status = self.text_label("正在检查网络…", "oobe-hint")
+        controls.pack_start(self.network_status, True, True, 0)
+        refresh = Gtk.Button(label="刷新")
+        refresh.connect("clicked", lambda _button: self.refresh_network())
+        controls.pack_start(refresh, False, False, 0)
+        box.pack_start(controls, False, False, 0)
+
+        self.network_list = Gtk.ListBox()
+        self.network_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.network_list.connect("row-activated", self.on_network_activated)
+        box.pack_start(self.network_list, False, False, 0)
+
+        self.network_empty = self.text_label("没有搜索到无线网络。", "oobe-hint")
+        self.network_empty.set_visible(False)
+        box.pack_start(self.network_empty, False, False, 0)
+
+        self.network_hint = self.text_label(
+            "选择无线网络后输入密码即可连接。密码只通过标准输入交给 NetworkManager，"
+            "不会出现在命令行参数或日志里。",
+            "oobe-hint",
+        )
+        box.pack_start(self.network_hint, False, False, 0)
+        return box
+
+    def shown_network(self):
+        self.refresh_network()
+
+    def refresh_network(self):
+        self.network_status.set_text("正在检查网络…")
+        for child in self.network_list.get_children():
+            self.network_list.remove(child)
+        self.network_empty.set_visible(False)
+
+        def work():
+            devices = oobe.wifi_devices()
+            return devices, oobe.ethernet_connected(), oobe.wifi_networks() if devices else []
+
+        self.in_background(work, self.network_ready)
+
+    def network_ready(self, result, error):
+        if error:
+            self.network_status.set_text("无法读取网络状态：%s" % error)
+            return
+        devices, wired, networks = result
+        if wired:
+            self.network_status.set_text("已通过有线网络连接")
+            self.mark_online()
+        elif any(network["connected"] for network in networks):
+            name = [n["ssid"] for n in networks if n["connected"]][0]
+            self.network_status.set_text("已连接到无线网络 %s" % name)
+            self.mark_online()
+        else:
+            self.network_status.set_text("当前没有连接到网络（可以跳过）")
+
+        if not devices:
+            self.network_hint.set_text(
+                "没有检测到无线网卡。可以使用有线网络，也可以进入桌面后"
+                "在右上角的网络图标里继续配置。"
+            )
+            return
+        if not networks:
+            self.network_empty.set_visible(True)
+            return
+        for network in networks:
+            self.network_list.add(self.network_row(network))
+        self.network_list.show_all()
+
+    def mark_online(self):
+        """Record that the board has a working connection, for the state file."""
+        if self.session is not None:
+            self.session.network_configured = True
+
+    def network_row(self, network):
+        row = Gtk.ListBoxRow()
+        row.network = network
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.set_border_width(8)
+        name = Gtk.Label(label=network["ssid"], xalign=0)
+        name.set_ellipsize(Pango.EllipsizeMode.END)
+        content.pack_start(name, True, True, 0)
+        if network["connected"]:
+            content.pack_start(self.badge("已连接", "ok"), False, False, 0)
+        content.pack_start(
+            self.badge("需要密码" if network["security"] else "开放",
+                       "warn" if network["security"] else ""),
+            False,
+            False,
+            0,
+        )
+        content.pack_start(self.badge("信号 %d%%" % network["signal"]), False, False, 0)
+        row.add(content)
+        return row
+
+    def on_network_activated(self, _list, row):
+        network = getattr(row, "network", None)
+        if self.busy or network is None:
+            return
+        password = ""
+        if network["security"]:
+            password = self.ask_password(network["ssid"])
+            if password is None:
+                return
+            if not password:
+                self.set_status("请输入无线网络密码", "oobe-error")
+                return
+        self.set_busy(True, "正在连接 %s…" % network["ssid"])
+
+        def work():
+            failure = oobe.wifi_connect(
+                network["ssid"], password, secured=bool(network["security"])
+            )
+            return network["ssid"], failure
+
+        self.in_background(work, self.network_connected)
+
+    def network_connected(self, result, error):
+        self.set_busy(False)
+        if error:
+            self.set_status("连接失败：%s" % error, "oobe-error")
+            return
+        ssid, failure = result
+        if failure:
+            self.set_status("连接 %s 失败：%s" % (ssid, failure), "oobe-error")
+            return
+        self.mark_online()
+        self.set_status("已连接到 %s" % ssid, "oobe-good")
+        self.refresh_network()
+
+    def ask_password(self, ssid):
+        """Ask for a Wi-Fi password.  Returns the text, or None if cancelled."""
+        dialog = Gtk.Dialog(title="连接到 %s" % ssid, transient_for=self.window, modal=True)
+        dialog.add_button("取消", Gtk.ResponseType.CANCEL)
+        confirm = dialog.add_button("连接", Gtk.ResponseType.OK)
+        confirm.get_style_context().add_class("suggested-action")
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        content = dialog.get_content_area()
+        content.set_spacing(8)
+        content.set_border_width(16)
+        content.add(self.text_label("请输入无线网络密码："))
+        field = self.secret_entry()
+        content.add(field)
+        dialog.show_all()
+        response = dialog.run()
+        text = field.get_text()
+        dialog.destroy()
+        if response != Gtk.ResponseType.OK:
+            return None
+        return text
+
+    # ----------------------------------------------------------- page: hostname
+    def page_hostname(self):
+        box = self.page_box(
+            "设备名称", "设备名称会出现在终端提示符、局域网和 SSH 登录提示里。"
+        )
+        self.hostname_entry = self.entry("jh7110-mars")
+        self.hostname_entry.connect("changed", lambda _entry: self.check_hostname())
+        box.pack_start(
+            self.labelled(
+                "名称",
+                self.hostname_entry,
+                "只能使用字母、数字和连字符。/etc/hosts 会一起更新，"
+                "sudo 不会再提示无法解析主机名。",
+            ),
+            False,
+            False,
+            0,
+        )
+        self.hostname_error = self.text_label("", "oobe-error")
+        self.hostname_error.set_visible(False)
+        box.pack_start(self.hostname_error, False, False, 0)
+        return box
+
+    def check_hostname(self):
+        problem = oobe.hostname_problem(self.hostname_entry.get_text().strip())
+        self.hostname_error.set_text(problem or "")
+        self.hostname_error.set_visible(bool(problem))
+        return not problem
+
+    def leave_hostname(self):
+        if not self.check_hostname():
+            return False
+        self.session.hostname = self.hostname_entry.get_text().strip()
+        return True
+
+    # --------------------------------------------------------------- page: user
+    def page_user(self):
+        box = self.page_box("创建你的账户", "这是桌面的登录账户，也是唯一的管理员账户。")
+
+        self.username_entry = self.entry("jh7110")
+        self.username_entry.connect("changed", self.on_user_typed)
+        box.pack_start(
+            self.labelled(
+                "用户名", self.username_entry, "小写字母、数字、下划线和连字符，用于登录和终端。"
+            ),
+            False,
+            False,
+            0,
+        )
+
+        self.password_entry = self.secret_entry("至少 8 个字符")
+        self.password_entry.connect("changed", self.on_user_typed)
+        box.pack_start(self.labelled("密码", self.password_entry, "不会显示，也不写入任何文件。"),
+                       False, False, 0)
+
+        self.confirm_entry = self.secret_entry("再输入一次")
+        self.confirm_entry.connect("changed", self.on_user_typed)
+        box.pack_start(self.labelled("确认密码", self.confirm_entry), False, False, 0)
+
+        self.user_error = self.text_label("", "oobe-error")
+        self.user_error.set_visible(False)
+        box.pack_start(self.user_error, False, False, 0)
+
+        # Folded by default: the display name and the root model are things most
+        # people never need to look at, and both are explained when they do.
+        advanced = Gtk.Expander(label="高级选项")
+        advanced.set_expanded(False)
+        advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        advanced_box.set_border_width(10)
+        self.display_entry = self.entry("显示名称（可选）")
+        self.display_entry.connect("changed", self.on_user_typed)
+        advanced_box.pack_start(
+            self.labelled(
+                "显示名称",
+                self.display_entry,
+                "显示在登录界面和用户菜单里；留空则与用户名相同。",
+            ),
+            False,
+            False,
+            0,
+        )
+        advanced_box.pack_start(
+            self.text_label(
+                "root 账户在镜像中是锁定状态，向导不会为它设置密码，也不会开启 root 登录。"
+                "需要管理员权限时，请在这个账户下使用 sudo。",
+                "oobe-hint",
+            ),
+            False,
+            False,
+            0,
+        )
+        advanced.add(advanced_box)
+        box.pack_start(advanced, False, False, 0)
+        return box
+
+    def on_user_typed(self, _entry):
+        """Re-check the form as it is typed in.
+
+        Nothing is said while the password field is still empty: the page has
+        just opened, and a red line about a password nobody has typed yet would
+        be the first thing the user reads.  Pressing "下一步" always complains,
+        which is what leave_user asks for.
+        """
+        self.check_user(complain=bool(self.password_entry.get_text()))
+
+    def check_user(self, complain=True):
+        problem = (
+            oobe.username_problem(self.username_entry.get_text().strip())
+            or oobe.display_name_problem(self.display_entry.get_text().strip())
+            or oobe.password_problem(
+                self.password_entry.get_text(), self.confirm_entry.get_text()
+            )
+        )
+        self.user_error.set_text(problem or "")
+        self.user_error.set_visible(bool(problem) and complain)
+        return not problem
+
+    def leave_user(self):
+        if not self.check_user():
+            return False
+        self.session.username = self.username_entry.get_text().strip()
+        self.session.display_name = (
+            self.display_entry.get_text().strip() or self.session.username
+        )
+        return True
+
+    # ------------------------------------------------------------- page: region
+    def page_region(self):
+        box = self.page_box("区域设置", "语言、时区和键盘布局随时可以修改，这里只是给出默认值。")
+
+        self.locale_combo = Gtk.ComboBoxText()
+        for locale, label in sorted(oobe.LOCALE_LABELS.items(), key=lambda item: item[1]):
+            self.locale_combo.append(locale, "%s（%s）" % (label, locale))
+        box.pack_start(
+            self.labelled("语言和区域", self.locale_combo, "影响菜单语言和日期、数字格式。"),
+            False,
+            False,
+            0,
+        )
+
+        self.timezone_combo = Gtk.ComboBoxText.new_with_entry()
+        for zone in oobe.available_timezones():
+            self.timezone_combo.append_text(zone)
+        box.pack_start(
+            self.labelled("时区", self.timezone_combo, "可以直接输入，例如 Asia/Shanghai。"),
+            False,
+            False,
+            0,
+        )
+
+        self.keymap_combo = Gtk.ComboBoxText.new_with_entry()
+        for keymap in oobe.available_keymaps():
+            self.keymap_combo.append_text(keymap)
+        box.pack_start(
+            self.labelled("键盘布局", self.keymap_combo, "可以直接输入，例如 us、cn、de。"),
+            False,
+            False,
+            0,
+        )
+        return box
+
+    def select_locale(self, locale):
+        self.locale_combo.set_active_id(locale)
+        if self.locale_combo.get_active() < 0:
+            self.locale_combo.set_active_id("en_US.UTF-8")
+
+    def select_timezone(self, timezone):
+        self.timezone_combo.get_child().set_text(timezone)
+
+    def select_keymap(self, keymap):
+        self.keymap_combo.get_child().set_text(keymap)
+
+    def leave_region(self):
+        self.session.locale = self.locale_combo.get_active_id() or "en_US.UTF-8"
+        self.session.timezone = self.timezone_combo.get_child().get_text().strip()
+        self.session.keymap = self.keymap_combo.get_child().get_text().strip()
+        if not self.session.timezone:
+            self.set_status("请填写时区", "oobe-error")
+            return False
+        return True
+
+    # ---------------------------------------------------------------- page: ssh
+    def page_ssh(self):
+        box = self.page_box(
+            "远程登录（SSH）", "SSH 默认开启，方便你在没有显示器的时候通过网络管理这块板子。"
+        )
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.pack_start(self.text_label("启用 SSH 服务"), False, False, 0)
+        self.ssh_switch = Gtk.Switch()
+        self.ssh_switch.set_active(True)
+        row.pack_end(self.ssh_switch, False, False, 0)
+        box.pack_start(row, False, False, 0)
+        box.pack_start(
+            self.text_label(
+                "无论这里怎么设置，root 都无法通过 SSH 登录（PermitRootLogin no）。"
+                "只有你创建的账户可以登录，密码就是上一步设置的密码。",
+                "oobe-hint",
+            ),
+            False,
+            False,
+            0,
+        )
+        return box
+
+    def leave_ssh(self):
+        self.session.ssh_enabled = self.ssh_switch.get_active()
+        return True
+
+    # ------------------------------------------------------------ page: updates
+    def page_updates(self):
+        box = self.page_box(
+            "系统更新", "镜像里的系统已经可以正常使用，向导不会在设置过程中安装更新。"
+        )
+        box.pack_start(self.text_label("进入桌面之后，可以随时在终端里运行："), False, False, 0)
+        command = self.text_label("sudo apt update && sudo apt full-upgrade", "oobe-hint")
+        command.set_selectable(True)
+        box.pack_start(command, False, False, 0)
+        box.pack_start(
+            self.text_label(
+                "这样做是有意的：安装更新需要网络，也可能花很长时间，而首次设置的每一步"
+                "都应该是离线也能完成的。更新失败也不会影响已经做好的设置。",
+                "oobe-hint",
+            ),
+            False,
+            False,
+            0,
+        )
+        return box
+
+    # ----------------------------------------------------------- page: hardware
+    def page_hardware(self):
+        box = self.page_box(
+            "硬件检测", "检测结果只保存在本机（/var/lib/jh7110/hardware.json），不会上传。"
+        )
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.hardware_status = self.text_label("正在检测…", "oobe-hint")
+        controls.pack_start(self.hardware_status, True, True, 0)
+        again = Gtk.Button(label="重新检测")
+        again.connect("clicked", lambda _button: self.start_hardware_check())
+        controls.pack_start(again, False, False, 0)
+        box.pack_start(controls, False, False, 0)
+
+        self.hardware_grid = Gtk.Grid(column_spacing=16, row_spacing=6)
+        box.pack_start(self.hardware_grid, False, False, 0)
+        box.pack_start(
+            self.text_label(
+                "“可用”表示硬件和驱动都在，“未检测”多半只是没有接设备。检测不会阻塞设置。",
+                "oobe-hint",
+            ),
+            False,
+            False,
+            0,
+        )
+        return box
+
+    def start_hardware_check(self):
+        self.hardware_status.set_text("正在检测…")
+        self.in_background(oobe.hardware_report, self.hardware_ready)
+
+    def hardware_ready(self, report, error):
+        if error:
+            log("the hardware check failed: %s" % error)
+            self.hardware_status.set_text("检测失败：%s（不影响继续设置）" % error)
+            return
+        for child in self.hardware_grid.get_children():
+            self.hardware_grid.remove(child)
+        for index, item in enumerate(report.get("checks", [])):
+            name = Gtk.Label(label=item["name"], xalign=0)
+            name.get_style_context().add_class("oobe-text")
+            self.hardware_grid.attach(name, 0, index, 1, 1)
+            detail = Gtk.Label(label=item["detail"], xalign=0)
+            detail.get_style_context().add_class("oobe-hint")
+            detail.set_ellipsize(Pango.EllipsizeMode.END)
+            self.hardware_grid.attach(detail, 1, index, 1, 1)
+            style = ""
+            if item["status"] in ("ok", "available"):
+                style = "ok"
+            elif item["status"] in ("error", "unsupported"):
+                style = "bad"
+            elif item["status"] in ("not-detected", "not-verified"):
+                style = "warn"
+            self.hardware_grid.attach(
+                self.badge(oobe.STATUS_LABELS.get(item["status"], item["status"]), style),
+                2,
+                index,
+                1,
+                1,
+            )
+        self.hardware_grid.show_all()
+        self.session.hardware = report
+        summary = report.get("summary", {})
+        self.hardware_status.set_text(
+            "检测完成：正常 %d、可用 %d、未检测 %d"
+            % (
+                summary.get("ok", 0),
+                summary.get("available", 0),
+                summary.get("not-detected", 0),
+            )
+        )
+
+    # ------------------------------------------------------------ page: confirm
+    def page_confirm(self):
+        box = self.page_box("确认设置", "点击“开始设置”后，向导会依次应用下面的内容。")
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class("oobe-card")
+        self.confirm_grid = Gtk.Grid(column_spacing=16, row_spacing=6)
+        card.pack_start(self.confirm_grid, False, False, 0)
+        box.pack_start(card, False, False, 0)
+        box.pack_start(
+            self.text_label(
+                "密码不会出现在这里，也不会写入任何文件：它在创建账户时直接交给系统，"
+                "之后系统只保存密码的哈希。",
+                "oobe-hint",
+            ),
+            False,
+            False,
+            0,
+        )
+        return box
+
+    def shown_confirm(self):
+        for child in self.confirm_grid.get_children():
+            self.confirm_grid.remove(child)
+        session = self.session
+        rows = [
+            ("设备名称", session.hostname),
+            ("用户名", session.username),
+            ("显示名称", session.display_name or session.username),
+            ("语言和区域", "%s（%s）" % (oobe.locale_label(session.locale), session.locale)),
+            ("时区", session.timezone),
+            ("键盘布局", session.keymap),
+            ("SSH", "开启" if session.ssh_enabled else "关闭"),
+            ("网络", "已连接" if session.network_configured else "未连接（可以稍后配置）"),
+        ]
+        for index, (label, value) in enumerate(rows):
+            name = Gtk.Label(label=label, xalign=0)
+            name.get_style_context().add_class("oobe-hint")
+            self.confirm_grid.attach(name, 0, index, 1, 1)
+            detail = Gtk.Label(label=value, xalign=0)
+            detail.get_style_context().add_class("oobe-text")
+            self.confirm_grid.attach(detail, 1, index, 1, 1)
+        self.confirm_grid.show_all()
+        self.next_button.set_label("开始设置")
+
+    # ------------------------------------------------------------- page: finish
+    def page_finish(self):
+        box = self.page_box("正在完成设置…", "请不要断电。")
+        self.finish_label = self.text_label("正在应用设置…")
+        box.pack_start(self.finish_label, False, False, 0)
+        self.progress = Gtk.ProgressBar()
+        self.progress.set_pulse_step(0.05)
+        box.pack_start(self.progress, False, False, 0)
+        self.finish_detail = self.text_label("", "oobe-hint")
+        box.pack_start(self.finish_detail, False, False, 0)
+        return box
+
+    def shown_finish(self):
+        self.finish_started = False
+        self.finish_done = False
+        self.next_button.set_label("完成")
+        self.next_button.set_sensitive(False)
+        # The page is shown before the work starts, so the progress bar is on
+        # screen by the time the first step runs.
+        GLib.idle_add(self.start_finalize)
+
+    def start_finalize(self):
+        """Apply everything from this page.  This is also what "重试" does.
+
+        Every method the backend offers is idempotent, so running the sequence
+        again after a failure repairs what is there rather than building a
+        second one.
+        """
+        if self.finish_started:
+            return False
+        self.finish_started = True
+        self.finish_done = False
+        self.finish_label.set_text("正在应用设置…")
+        self.finish_detail.set_text("")
+        self.progress.set_fraction(0.0)
+        self.back_button.set_visible(False)
+        password = self.password_entry.get_text()
+        self.set_busy(True, "正在应用设置…")
+        self.progress.pulse()
+        self.pulse_timer = GLib.timeout_add(120, self.pulse)
+        session = self.session
+
+        def work():
+            return session.apply_all(password)
+
+        self.in_background(work, self.finalize_done)
+        return False
+
+    def pulse(self):
+        if self.busy:
+            self.progress.pulse()
+            return True
+        self.pulse_timer = None
+        return False
+
+    def finalize_done(self, result, error):
+        self.set_busy(False)
+        if self.pulse_timer is not None:
+            GLib.source_remove(self.pulse_timer)
+            self.pulse_timer = None
+        if error:
+            log("the setup stopped: %s" % error)
+            self.finish_problem("设置没有完成", "%s\n点击“重试”可以继续。" % error, error)
+            return
+        success, failed_step, message = result
+        if not success:
+            log("the setup stopped at: %s" % failed_step)
+            self.finish_problem(
+                "“%s”这一步没有完成" % failed_step,
+                "%s\n已经应用的设置不会丢失，点击“重试”可以继续。" % message,
+                message,
+            )
+            return
+        self.progress.set_fraction(1.0)
+        self.finish_done = True
+        # The password is not needed any more, and the field should not keep it
+        # on screen while the machine waits at the login prompt.
+        self.password_entry.set_text("")
+        self.confirm_entry.set_text("")
+        oobe.clear_attempts()
+        self.finish_label.set_text("设置完成")
+        self.finish_detail.set_text(
+            "现在可以用账户 %s 和刚刚设置的密码登录桌面了。" % self.session.username
+        )
+        self.set_status("设置完成", "oobe-good")
+        self.next_button.set_label("完成")
+        self.next_button.set_sensitive(True)
+        self.next_button.grab_focus()
+        log("the setup finished for user %s" % self.session.username)
+
+    def finish_problem(self, title, detail, message):
+        self.finish_done = False
+        self.finish_label.set_text(title)
+        self.finish_detail.set_text(detail)
+        self.set_status("设置失败：%s" % message, "oobe-error")
+        self.next_button.set_label("重试")
+        self.next_button.set_sensitive(True)
+        self.back_button.set_visible(True)
+        self.finish_started = False
+
+
+if __name__ == "__main__":
+    sys.exit(main())
