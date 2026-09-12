@@ -38,7 +38,8 @@ socket 交给后端：
 - `jh7110-oobe-backend.socket` 属于 `sockets.target`，后端由第一次连接启动；
   没有向导的板子不会运行它。`.service` 没有 `[Install]` 段，不能被装进启动路径。
 - 后端除检查 socket 的属主与权限外，还用 `SO_PEERCRED` 检查连接方 uid，
-  只接受 `lightdm`。
+  只接受两个：`lightdm`（首启时运行向导的账户）和 root（控制台恢复路径，
+  以及人工以 root 运行的向导）。
 - 方法表是固定的：`Ping`、`GetBoard`、`GetState`、`SetHostname`、`CreateUser`、
   `SetUserPassword`、`SetTimezone`、`SetLocale`、`SetKeymap`、`ConfigureSSH`、
   `SaveHardware`、`FinalizeSetup`。**没有** `RunArbitraryCommand` 这类方法，
@@ -55,7 +56,7 @@ polkit 规则只给了 `lightdm` 两件事，别的都没有：
 ## 状态
 
 ~~~text
-/var/lib/jh7110/oobe.done         设置已完成（空文件）
+/var/lib/jh7110/oobe.done         设置已完成（一行 finalized=… hostname=… user=…）
 /var/lib/jh7110/oobe-state.json   向导记录下来的选择，不含密码
 /var/lib/jh7110/hardware.json     硬件报告
 /var/lib/jh7110/prepare.done      机器准备完成（见 first-boot.md）

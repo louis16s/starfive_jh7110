@@ -13,8 +13,10 @@ This file is an audit index, not a replacement for upstream license terms.
   this project's Debian package, image, Actions artifact and Release.
 - Packaging: `scripts/build-gpu-package.sh`
 - Debian package: `jh7110-pvr-rogue`
-- Installed content: PVR firmware, userspace libraries, Vulkan/OpenCL ICD,
-  test utilities and `rc.pvr`.
+- Installed content: PVR firmware, userspace libraries, Vulkan/OpenCL ICD and
+  test utilities. The archive's `rc.pvr` init script is deliberately not
+  shipped - it loads the retired `drm_starfive` module; the package enables
+  `jh7110-pvr.service`, which loads `pvrsrvkm`.
 - Audit record in artifact: `/usr/share/doc/jh7110-pvr-rogue/SOURCE`
 
 The payload is intentionally downloaded from the locked source and is not

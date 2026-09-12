@@ -21,7 +21,7 @@ Mars 的 DTS 链（`jh7110-milkv-mars.dts` → `jh7110-common.dtsi` → `jh7110.
 里原本没有任何 reserved-memory 节点，而厂商 defconfig 也没有 CMA 条目：
 `kernel/dma/Kconfig` 的 `CMA_SIZE_MBYTES` 在内核里默认只有 16 MiB。
 显示、GPU、VPU 驱动都通过 CMA 分配扫描输出缓冲，一个 1080p XRGB8888
-帧缓冲就是 8.29 MiB，16 MiB 池在桌面会话下会立刻耗尽。
+帧缓冲就是 7.91 MiB（8,294,400 字节），16 MiB 池在桌面会话下会立刻耗尽。
 `scripts/build-kernel.sh` 现在设置 `CMA_SIZE_MBYTES=512` 并断言生成的
 DTB 里存在 `linux,cma` 默认池且不小于 256 MiB，构建期就会拦住回退。
 运行期可用 `jh7110-info` 的 `CmaTotal` 字段核对（健康值 524288 kB）。
@@ -40,8 +40,9 @@ Mars 其他 PCB 修订版引脚与电源对应关系尚需核对。
 构建检查 DRM、Verisilicon、HDMI 和 IMG Rogue 必须启用。工程从
 `sources.lock` 中固定的 StarFive `img-gpu-powervr-bin-1.19.6345021.tar.gz`
 生成 `jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb`，构建时校验归档
-SHA256，并通过 dpkg 安装 firmware、PVR userspace、Vulkan ICD 和
-`rc.pvr`。用户已确认该 GPU 包具备镜像分发许可；包内 `SOURCE` 文件仍
+SHA256，并通过 dpkg 安装 firmware、PVR userspace 和 Vulkan ICD。厂商归档
+里的 `rc.pvr` 不安装：它加载的是已废弃的 `drm_starfive`，实际入口是
+`jh7110-pvr.service`。用户已确认该 GPU 包具备镜像分发许可；包内 `SOURCE` 文件仍
 记录来源、版本、哈希和授权说明，便于审计。
 
 安装包会启用 `jh7110-pvr.service`，仅请求加载 `pvrsrvkm`（也支持

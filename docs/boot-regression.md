@@ -29,6 +29,9 @@
 - 首次设密服务排在 LightDM 前，却依赖 tty1，缺少 TERM、主动切换 VT 和超时。
   显式启用内核 VT、fbcon、DRM fbdev 和 USB HID，启动参数同时保留 HDMI 文本控制台和串口。
   设密时切换 tty1，用英文控制台文本避免中文字体不可显示；中文桌面和 UTC+8 保留。
+  （这一版之后设计又改过一次：交互式设密不再排在启动路径里，而是 greeter 会话里的
+  图形向导按需启动，恢复用的文本设置移到 tty9，见 [first-boot.md](first-boot.md)。
+  上面记的是当时那一版的修复内容。）
 - `lsblk --output PARTNUM` 是错误列名；改为 `PARTN`。
   依据：[util-linux v2.41 源码列定义](https://github.com/util-linux/util-linux/blob/v2.41/misc-utils/lsblk.c)。
   原来裸调用的 `systemd-growfs` 不是常规 PATH 命令；改用已安装 e2fsprogs 的 resize2fs，
@@ -46,7 +49,8 @@
 控制台选项。DTB 构建继续检查板型 compatible 和显示/GPU 节点状态。
 这些仅验证配置与编译，不能证明显示器 EDID、实际输出和 USB 键盘工作。
 
-刷入新镜像后，应依次看到 U-Boot 菜单、控制台初始化/设密、LightDM、XFCE。
+刷入新镜像后，应依次看到 U-Boot 菜单、无人值守的机器准备（`jh7110-prepare`）、
+未设置过的板子上是图形向导而不是登录界面、走完向导后才是 LightDM 登录界面和 XFCE。
 已有镜像不会自动获得这些修改。若仍停在标志，优先记录完整 115200 8N1 串口启动日志，
 区分是否加载 kernel、是否挂载 rootfs、是否进入 systemd，再检查显示服务。
 在已经认证的 shell 中执行：

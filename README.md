@@ -248,8 +248,9 @@ U-Boot、OpenSBI 和板级启动介质配置必须按板型区分。当前配置
 内核构建会检查 DRM、StarFive display controller、Inno HDMI 和 IMG/PVR 内核选项，Mars 还会单独生成和检查 Mars desktop DTB。构建同时固化几项桌面必需的内核配置并逐项断言：`CMA_SIZE_MBYTES=512`（厂商 defconfig 用的是内核默认 16 MiB，不够一个 1080p 帧缓冲）、`CONFIG_HZ=250`、`CPU_FREQ_DEFAULT_GOV_SCHEDUTIL`，以及 `SECCOMP`/`SECCOMP_FILTER`。生成的 DTB 还要通过断言：必须存在不少于 256 MiB 的 `linux,cma` 默认池。
 
 本次更新将 sources.lock 固定的 StarFive PVR DDK 1.19.6345021 制作为
-`jh7110-pvr-rogue` Debian 包，包含 IMG BXE-4-32 firmware、PVR userspace、
-Vulkan/OpenCL ICD 和官方 `rc.pvr`。项目所有者已确认这些 GPU 包获得许可，
+`jh7110-pvr-rogue` Debian 包，包含 IMG BXE-4-32 firmware、PVR userspace 和
+Vulkan/OpenCL ICD（官方归档里的 `rc.pvr` 不安装，它加载的是已废弃的
+`drm_starfive`，实际入口是 `jh7110-pvr.service`）。项目所有者已确认这些 GPU 包获得许可，
 构建时仍会验证官方归档 SHA256，并在包内保留来源和授权记录。CI 能验证
 打包和安装，不能替代 VF2/Mars 实板上的 GPU ABI、HDMI 热插拔和显示器验收。
 
@@ -262,7 +263,7 @@ systemctl status jh7110-pvr.service
 drm_info
 vulkaninfo
 eglinfo
-glmark2
+glmark2-x11        # X11 会话；另有 glmark2-wayland、glmark2-drm
 ~~~
 
 图形测试方法和已知限制见 docs/graphics.md。若输出为 llvmpipe，表示使用 CPU 软件渲染，不是 GPU 硬件加速通过。
@@ -291,7 +292,7 @@ GPU 包可执行 `make BOARD=mars gpu-package`。
 jh7110-info            # 板型、内存与 CMA、CPU 调频、内核项、DRM/HDMI、GPU、温度
 jh7110-test-graphics   # 桌面会话内的 DRM/HDMI/Vulkan/OpenGL 验收
 jh7110-diagnostics     # 脱敏诊断包，可以直接附在问题报告里
-jh7110-welcome         # 桌面里的上手说明（应用菜单 → JH7110 上手指南）
+jh7110-welcome         # 桌面里的板卡说明（应用菜单 → JH7110 板卡信息）
 ~~~
 
 `jh7110-diagnostics` 只读，产出一个 tar.gz：每个文件都经过过滤而不是原样复制，

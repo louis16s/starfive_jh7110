@@ -58,7 +58,7 @@ fails the build instead of the board:
 
 | Option | Why |
 | --- | --- |
-| `CMA_SIZE_MBYTES=512` | The vendor defconfig sets no CMA option, so the kernel falls back to its own 16 MiB default - less than one 1080p XRGB8888 framebuffer (8.29 MiB) for a driver stack that allocates every scanout buffer from CMA. |
+| `CMA_SIZE_MBYTES=512` | The vendor defconfig sets no CMA option, so the kernel falls back to its own 16 MiB default - two 1080p XRGB8888 framebuffers (7.91 MiB each) - for a driver stack that allocates every scanout buffer from CMA. |
 | `CONFIG_HZ=250` | The locked defconfig sets `HZ_100`, which caps timer resolution for interactivity and USB/audio latency. |
 | `CPU_FREQ_DEFAULT_GOV_SCHEDUTIL` | The defconfig defaulted to `ondemand`; `schedutil` uses the scheduler's own utilisation signal. |
 | `SECCOMP`/`SECCOMP_FILTER` | Absent from the vendor defconfig (it also sets `CONFIG_EXPERT`, which makes SECCOMP default off), so every sandboxed service - and most of the desktop stack - ran with syscall filtering unavailable. |
