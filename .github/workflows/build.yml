@@ -145,7 +145,7 @@ jobs:
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" check
 
       - name: Run shellcheck
-        run: shellcheck --severity=error scripts/*.sh build.sh packages/gpu/postinst packages/gpu/initramfs-hook board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-info rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror
+        run: shellcheck --severity=error scripts/*.sh scripts/lib/*.sh build.sh packages/gpu/postinst packages/gpu/initramfs-hook board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-firstboot rootfs/overlay/usr/bin/jh7110-info rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror
 
       - name: Fetch locked BSP sources
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" fetch

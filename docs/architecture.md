@@ -231,6 +231,23 @@ GitHub Actions will use an x86_64 Ubuntu runner and cache source archives, ccach
 * license gate result;
 * build logs and artifact SHA-256.
 
+Both payload builds are timestamp-pinned, so two builds of the same commit
+produce identical bytes and a published digest can be checked by rebuilding it
+rather than by trusting the manifest. `scripts/lib/build-timestamps.sh` derives
+`SOURCE_DATE_EPOCH` from the commit date — the same value the manifest records
+as `source_date_epoch` — and exports `KBUILD_BUILD_TIMESTAMP` along with
+`KBUILD_BUILD_USER`/`KBUILD_BUILD_HOST`. U-Boot formats its version string from
+the epoch; the kernel stamps its built-in initramfs cpio with it, and without
+the user/host overrides it would take those from `whoami`/`uname -n`, which put
+the CI runner's hostname inside every released kernel banner. One timestamp
+sits outside those switches: binman has no `SOURCE_DATE_EPOCH` handling and lets
+`-t` on mkimage stamp the FIT's `/timestamp` property from the input file's
+mtime, so `scripts/build-uboot.sh` rewrites that property afterwards. The
+rewrite is an in-place, size-preserving four-byte overwrite — the FIT's image
+data follows the device tree, so repacking the blob the way `fdtput` does would
+move that data and invalidate every data-offset in the file — and it refuses to
+write unless exactly those four bytes change.
+
 `workflow_dispatch` accepts `board=all|visionfive2|mars` and `build_type=release|debug`. A `preflight` job rejects anything else before the matrix starts: `workflow_call` passes a free-form board, and an unknown value used to fall through the matrix expression to "build both boards" while every guarded step evaluated false, so the job reported success having built nothing. A release job must build each requested board in a clean output directory. A failure in one board must not publish the other board under the wrong filename.
 
 Publishing is opt-in (`publish_release` defaults to false) and the release asset

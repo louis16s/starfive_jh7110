@@ -15,7 +15,7 @@ board=$1
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
 
-for command_name in curl dpkg-deb python3 rsync sha256sum tar; do
+for command_name in curl dpkg-deb md5sum python3 rsync sha256sum tar; do
     command -v "$command_name" >/dev/null 2>&1 \
         || die "missing command: $command_name"
 done
@@ -80,6 +80,13 @@ rm -f "$stage_dir"/usr/lib/libvulkan.so* \
 # drm_starfive module. The systemd unit below loads the current pvrsrvkm
 # driver; leaving the obsolete script installed invites accidental use.
 rm -f "$stage_dir/etc/init.d/rc.pvr"
+# dpkg records the directories it finds, empty ones included, so removing the
+# script above would otherwise leave an empty /etc/init.d behind in the
+# package - a directory the system already provides and no maintainer script
+# expects to be shipped.
+if [[ -d "$stage_dir/etc/init.d" ]]; then
+    find "$stage_dir/etc/init.d" -depth -type d -empty -delete
+fi
 
 # Debian Trixie uses merged-usr. Package firmware and units under /usr/lib,
 # never ship a real top-level /lib directory over the distribution symlink.
@@ -148,6 +155,27 @@ printf '%s\n' \
 ln -s /usr/lib/systemd/system/jh7110-pvr.service \
     "$stage_dir/etc/systemd/system/multi-user.target.wants/jh7110-pvr.service"
 
+# dpkg-deb only copies DEBIAN/ into the archive, so nothing generates the file
+# list digest that dpkg-buildpackage would: without md5sums `dpkg --verify`
+# reports every file in this package as unverified, which hides real
+# corruption. Paths are relative to the package root (no leading ./), sorted,
+# and cover regular files only - symlinks are not digestible and dpkg does not
+# list them here.
+(
+    cd "$stage_dir"
+    find . -path ./DEBIAN -prune -o -type f -print0 \
+        | LC_ALL=C sort -z \
+        | xargs -0 md5sum \
+        | sed 's|^\([0-9a-f]\{32\}\)  \./|\1  |' \
+        > DEBIAN/md5sums
+)
+[[ -s "$stage_dir/DEBIAN/md5sums" ]] || die "generated an empty md5sums file"
+
 dpkg-deb --build --root-owner-group "$stage_dir" "$output_package" >/dev/null
 dpkg-deb --info "$output_package" >/dev/null
+# Read the control member back out of the finished archive: writing the file
+# into the staging tree is not the same as dpkg-deb carrying it into the .deb.
+control_listing=$(dpkg-deb --ctrl-tarfile "$output_package" | tar --list --file=-)
+[[ "$control_listing" == *md5sums* ]] \
+    || die "md5sums did not make it into $output_package"
 printf 'GPU package ready: %s\n' "$output_package"

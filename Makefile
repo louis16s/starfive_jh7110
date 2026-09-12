@@ -13,6 +13,7 @@ UBOOT_SOURCE := $(shell bash -c 'source "board/$(BOARD)/profile.conf" >/dev/null
 check:
 	bash tests/test-kernel-merge.sh
 	python3 tests/test-gpu-runtime.py
+	python3 tests/test-build-reproducibility.py
 	python3 tests/test-boot-config.py
 	python3 tests/test-board-info.py
 	python3 tests/test-release-assets.py

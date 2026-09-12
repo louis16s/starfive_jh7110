@@ -14,6 +14,8 @@ board=$1
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
+# shellcheck source=lib/build-timestamps.sh
+source "$REPO_ROOT/scripts/lib/build-timestamps.sh"
 
 kernel_source="$REPO_ROOT/$SOURCE_ROOT/$KERNEL_SOURCE"
 output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/kernel"
@@ -28,6 +30,11 @@ if [[ "${USE_CCACHE:-0}" == 1 ]]; then
     command -v ccache >/dev/null 2>&1 || die "USE_CCACHE=1 requires ccache"
     compiler="ccache $compiler"
 fi
+
+# The cpio mtimes of the built-in initramfs and the compile user/host in
+# linux_banner come from these; see the file for why they cannot be left to the
+# build machine.
+pin_build_timestamps
 
 mkdir -p "$output_dir"
 kernel_make() {

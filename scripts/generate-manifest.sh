@@ -13,6 +13,8 @@ die() {
 board=$1
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
+# shellcheck source=lib/build-timestamps.sh
+source "$REPO_ROOT/scripts/lib/build-timestamps.sh"
 command -v sha256sum >/dev/null 2>&1 || die "missing sha256sum"
 
 readonly output_dir="$REPO_ROOT/$OUTPUT_ROOT/$board"
@@ -60,6 +62,10 @@ source_lock_sha256=$(sha256_file "$REPO_ROOT/$SOURCE_LOCK")
 repository_commit=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)
 [[ -n "$repository_commit" ]] \
     || die "cannot determine repository commit; is $REPO_ROOT a git checkout?"
+# Derived through the build scripts' own rule instead of a copy of it: the
+# manifest has to name the epoch the payloads were actually stamped with, and
+# that is what makes this build repeatable from `repository_commit` alone.
+pin_build_timestamps
 build_host=$(uname -a)
 build_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 timezone_offset=$(TZ="$TIMEZONE" date +%z)
@@ -115,6 +121,10 @@ chmod 0644 "$manifest_tmp"
     fi
     printf 'source_lock_sha256=%s\n' "$source_lock_sha256"
     printf 'repository_commit=%s\n' "$repository_commit"
+    # Every timestamp U-Boot and the kernel embed comes from this value, so a
+    # rebuild that reproduces the digest is a one-line check rather than an
+    # archaeology exercise.
+    printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
     printf 'build_host=%s\n' "$build_host"
     printf 'build_utc=%s\n' "$build_utc"
     printf '\nartifacts:\n'
