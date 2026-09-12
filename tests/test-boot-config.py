@@ -55,6 +55,29 @@ class BootConfig(unittest.TestCase):
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
 
+    def test_hostname_and_hosts_are_written_together(self):
+        # The board's name lives in two files, and sudo resolves it through the
+        # second one: a first boot that only sets /etc/hostname is the "sudo:
+        # unable to resolve host" warning on every later command.
+        script = read("rootfs/overlay/usr/libexec/jh7110-firstboot")
+        self.assertIn("jh7110_set_system_hostname", script)
+        self.assertNotIn("hostnamectl set-hostname", script)
+        library = read("rootfs/overlay/usr/lib/jh7110/common.sh")
+        self.assertIn('"$JH7110_ETC/hostname"', library)
+        self.assertIn('"$JH7110_ETC/hosts"', library)
+        self.assertIn("getent hosts", library)
+        # The image ships its own identity: mmdebstrap copies the build host's
+        # /etc/hostname and /etc/hosts in, which is both a runner-dependent
+        # image and a name the board's hosts file has never heard of.
+        rootfs = read("scripts/build-rootfs.sh")
+        self.assertIn("jh7110_write_hostname_files", rootfs)
+        self.assertIn("DEFAULT_HOSTNAME=$DEFAULT_HOSTNAME", rootfs)
+        self.assertIn(': > "$rootfs_dir/etc/hosts"', rootfs)
+        for board, token in (("mars", "mars"), ("visionfive2", "vf2")):
+            self.assertIn(
+                f"DEFAULT_HOSTNAME=jh7110-{token}", read(f"configs/{board}.conf")
+            )
+
     def test_kernel_console_required(self):
         script = read("scripts/build-kernel.sh")
         for symbol in ("VT_CONSOLE", "FRAMEBUFFER_CONSOLE", "DRM_FBDEV_EMULATION", "USB_HID"):

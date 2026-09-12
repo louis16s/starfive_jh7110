@@ -11,6 +11,7 @@ UBOOT_SOURCE := $(shell bash -c 'source "board/$(BOARD)/profile.conf" >/dev/null
 .PHONY: check profile verify-sources host-check fetch kernel uboot opensbi gpu-package rootfs install-kernel image compress manifest
 
 check:
+	bash tests/test-hostname.sh
 	bash tests/test-kernel-merge.sh
 	python3 tests/test-gpu-runtime.py
 	python3 tests/test-build-reproducibility.py

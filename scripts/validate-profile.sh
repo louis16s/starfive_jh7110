@@ -20,6 +20,10 @@ profile="$REPO_ROOT/board/$board/profile.conf"
 
 # shellcheck source=/dev/null
 source "$profile"
+# The hostname rules are the ones the board itself enforces, so a profile that
+# passes here cannot be rejected by the first boot it was built for.
+# shellcheck source=../rootfs/overlay/usr/lib/jh7110/common.sh
+source "$REPO_ROOT/rootfs/overlay/usr/lib/jh7110/common.sh"
 
 # The release asset and image name must identify their own board: both board
 # trees share OUTPUT_ROOT=build and the CI release step publishes
@@ -100,6 +104,16 @@ done
     || die "IMAGE_BASENAME is not a portable file name: $IMAGE_BASENAME"
 [[ "$IMAGE_BASENAME" == *"$board_image_token"* ]] \
     || die "IMAGE_BASENAME must contain '$board_image_token': $IMAGE_BASENAME"
+
+# The hostname is written into /etc/hostname and /etc/hosts at build time, so
+# an invalid one is an image that boots with the wrong name and a `sudo` that
+# cannot resolve its own host; a name that disagrees with the rest of the
+# profile is a board answering to the other board's name.
+[[ -n "${DEFAULT_HOSTNAME:-}" ]] || die "DEFAULT_HOSTNAME is empty"
+jh7110_hostname_validate "$DEFAULT_HOSTNAME" \
+    || die "DEFAULT_HOSTNAME is not a valid hostname: $DEFAULT_HOSTNAME"
+[[ "$DEFAULT_HOSTNAME" == "jh7110-$board_image_token" ]] \
+    || die "DEFAULT_HOSTNAME must be jh7110-$board_image_token: $DEFAULT_HOSTNAME"
 
 for policy_name in ROOT_DEVICE_POLICY NVME_POLICY EMMC_POLICY; do
     case ${!policy_name} in

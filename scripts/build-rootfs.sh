@@ -93,12 +93,49 @@ install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
 BOARD_ID=$BOARD_ID
 BOARD_NAME='$BOARD_NAME'
+DEFAULT_HOSTNAME=$DEFAULT_HOSTNAME
 TIMEZONE=$TIMEZONE
 DEFAULT_LOCALE=$DEFAULT_LOCALE
 DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 SUPPORTED_LOCALES='$SUPPORTED_LOCALES'
 DEFAULT_USER=$DEFAULT_USER
 EOF
+
+# mmdebstrap --mode=root copies the build host's /etc/hostname and /etc/hosts
+# into the target, and nothing used to overwrite them: two runs of the same
+# commit produced images with different content, and the board booted
+# answering to the CI runner's name with a hosts file that had never heard of
+# it, which is the `sudo: unable to resolve host` warning on every command.
+# Both files are written here, with the same functions the board runs, so the
+# image ships and the first boot maintains one implementation.
+inherited_hostname=$(head -n 1 "$rootfs_dir/etc/hostname" 2>/dev/null || true)
+inherited_hostname=${inherited_hostname%%[[:space:]]*}
+if [[ -n "$inherited_hostname" && "$inherited_hostname" != "$DEFAULT_HOSTNAME" ]]; then
+    printf 'build-rootfs: replacing the inherited hostname %s with %s\n' \
+        "$inherited_hostname" "$DEFAULT_HOSTNAME" >&2
+fi
+# The inherited hosts file describes the build host - its extra lines are not
+# this image's - so the base entries are rendered from nothing and the result
+# is a function of the profile alone.
+: > "$rootfs_dir/etc/hosts"
+
+# The library derives every path from these, and the board's own copy of it is
+# the one that will run on the device; source the same file the overlay ships.
+JH7110_ETC="$rootfs_dir/etc"
+JH7110_STATE_DIR="$rootfs_dir/var/lib/jh7110"
+readonly JH7110_ETC JH7110_STATE_DIR
+# shellcheck source=../rootfs/overlay/usr/lib/jh7110/common.sh
+source "$overlay_dir/usr/lib/jh7110/common.sh"
+# This writes files only - it must never rename the machine doing the build.
+jh7110_write_hostname_files "$DEFAULT_HOSTNAME" \
+    || die "could not write the image hostname and hosts files"
+if ! awk -v name="$DEFAULT_HOSTNAME" '
+    $1 == "127.0.1.1" && $2 == name { found = 1 }
+    END { exit !found }
+' "$rootfs_dir/etc/hosts"; then
+    die "$rootfs_dir/etc/hosts does not map 127.0.1.1 to $DEFAULT_HOSTNAME"
+fi
+
 printf '%s\n' "$TIMEZONE" > "$rootfs_dir/etc/timezone"
 ln -sfn "/usr/share/zoneinfo/$TIMEZONE" "$rootfs_dir/etc/localtime"
 
@@ -153,6 +190,7 @@ chroot "$rootfs_dir" /usr/bin/env -i \
     SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
     DEFAULT_LOCALE="$DEFAULT_LOCALE" DEFAULT_LANGUAGE="$DEFAULT_LANGUAGE" \
     SUPPORTED_LOCALES="$SUPPORTED_LOCALES" DEFAULT_USER="$DEFAULT_USER" \
+    DEFAULT_HOSTNAME="$DEFAULT_HOSTNAME" \
     GPU_DEB_NAME="$gpu_deb_name" \
     /bin/bash -Eeuc '
         if [[ -n "${GPU_DEB_NAME:-}" ]]; then
@@ -196,6 +234,17 @@ chroot "$rootfs_dir" /usr/bin/env -i \
                 printf "%s\\n" "$nft_output" >&2
                 exit 1
             fi
+        fi
+        # The board has to be able to resolve its own name before the first
+        # boot even runs, and a hosts file with no 127.0.1.1 line is the
+        # `sudo: unable to resolve host` warning waiting to happen.
+        # Resolving its own name is what `sudo` needs, and it is the one check
+        # that reads the file the way the board will.  A failure here prints
+        # what is in the file, because that is the whole diagnosis.
+        if ! getent hosts "$DEFAULT_HOSTNAME" > /dev/null; then
+            echo "rootfs: /etc/hosts does not resolve $DEFAULT_HOSTNAME:" >&2
+            cat /etc/hosts >&2
+            exit 1
         fi
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop

@@ -86,11 +86,20 @@ setup_root_password() {
 # re-running this service after a later failure does not ask twice.
 setup_root_password
 
-if [[ -n "${BOARD_ID:-}" && "$BOARD_ID" != unconfigured ]]; then
-    hostnamectl set-hostname "jh7110-$BOARD_ID"
-else
-    die "invalid board configuration"
-fi
+[[ -n "${BOARD_ID:-}" && "$BOARD_ID" != unconfigured ]] \
+    || die "invalid board configuration"
+
+# Setting /etc/hostname is only half of the machine's name: sudo, hostname -f
+# and every other caller resolves the name through /etc/hosts, and a name that
+# exists in only one of the two files is what makes every sudo print
+# "unable to resolve host jh7110-mars".  The shared library writes both files,
+# renames the running kernel and then asks the resolver whether it worked.
+# shellcheck source=/dev/null
+source /usr/lib/jh7110/common.sh
+hostname_name=$(jh7110_default_hostname)
+jh7110_set_system_hostname "$hostname_name" \
+    || die "could not set the system hostname to $hostname_name"
+unset hostname_name
 
 timezone_name=${TIMEZONE:-}
 [[ -n "$timezone_name" && -f "/usr/share/zoneinfo/$timezone_name" ]] \
