@@ -248,6 +248,17 @@ data follows the device tree, so repacking the blob the way `fdtput` does would
 move that data and invalidate every data-offset in the file — and it refuses to
 write unless exactly those four bytes change.
 
+One artifact group stays outside that guarantee: the kernel's Debian packages.
+`scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which
+ignores `SOURCE_DATE_EPOCH` and takes the packaging time, so the `.deb` files -
+and the `.changes`/`.buildinfo` published beside them - are not byte-identical
+between two builds even though the payload inside them is pinned by the same
+epoch. Comparing their
+digests across runs is therefore not a reproducibility check; comparing the
+U-Boot and image artifacts is. Closing this needs a fixed clock around
+`make bindeb-pkg` (a `date` shim, or libfaketime) and two identical CI runs to
+prove it, which is why it is recorded here rather than assumed.
+
 `workflow_dispatch` accepts `board=all|visionfive2|mars` and `build_type=release|debug`. A `preflight` job rejects anything else before the matrix starts: `workflow_call` passes a free-form board, and an unknown value used to fall through the matrix expression to "build both boards" while every guarded step evaluated false, so the job reported success having built nothing. A release job must build each requested board in a clean output directory. A failure in one board must not publish the other board under the wrong filename.
 
 Publishing is opt-in (`publish_release` defaults to false) and the release asset
