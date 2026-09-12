@@ -144,8 +144,70 @@ jobs:
       - name: Validate profile and lock
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" check
 
+      # Every shell file the image ships or the build runs, named one by one:
+      # a glob over the overlay would quietly skip a script whose name changes,
+      # and the point of this step is that a new one cannot be forgotten.
       - name: Run shellcheck
-        run: shellcheck --severity=error scripts/*.sh scripts/lib/*.sh build.sh packages/gpu/postinst packages/gpu/initramfs-hook board/*/profile.conf rootfs/overlay/usr/libexec/jh7110-prepare rootfs/overlay/usr/libexec/jh7110-console-setup rootfs/overlay/usr/libexec/jh7110-account rootfs/overlay/usr/lib/jh7110/common.sh rootfs/overlay/usr/bin/jh7110-info rootfs/overlay/usr/bin/jh7110-test-graphics rootfs/overlay/usr/local/sbin/jh7110-mirror tests/*.sh
+        run: |
+          shellcheck --severity=error \
+            board/*/profile.conf build.sh packages/gpu/postinst packages/gpu/initramfs-hook \
+            scripts/*.sh scripts/lib/*.sh \
+            rootfs/overlay/usr/bin/jh7110-diagnostics \
+            rootfs/overlay/usr/bin/jh7110-info \
+            rootfs/overlay/usr/bin/jh7110-test-graphics \
+            rootfs/overlay/usr/bin/jh7110-welcome \
+            rootfs/overlay/usr/lib/jh7110/common.sh \
+            rootfs/overlay/usr/libexec/jh7110-account \
+            rootfs/overlay/usr/libexec/jh7110-console-setup \
+            rootfs/overlay/usr/libexec/jh7110-greeter \
+            rootfs/overlay/usr/libexec/jh7110-prepare \
+            rootfs/overlay/usr/libexec/jh7110-set-hostname \
+            rootfs/overlay/usr/local/sbin/jh7110-mirror \
+            tests/*.sh
+
+      # The wizard and the backend are Python and never compiled on the board,
+      # so a syntax error in either would surface as a board whose setup does
+      # not start.  compileall parses without importing, which is all that can
+      # be checked on a host with no python3-gi and no GTK.
+      #
+      # The cache goes to a throwaway prefix: compileall writes __pycache__ next
+      # to what it compiles, the overlay is rsynced into the rootfs a few steps
+      # later, and bytecode compiled by the runner's interpreter has no business
+      # being in an image whose file times are pinned to the commit.
+      - name: Compile the Python the image ships
+        run: |
+          PYTHONPYCACHEPREFIX=$(mktemp -d) python3 -m compileall -q \
+            rootfs/overlay/usr/bin/jh7110-oobe \
+            rootfs/overlay/usr/lib/jh7110/oobe.py \
+            rootfs/overlay/usr/libexec/jh7110-oobe-backend
+          stray=$(find rootfs/overlay -name '__pycache__' -o -name '*.pyc')
+          if [[ -n "$stray" ]]; then
+            echo "::error::compiling the shipped Python left bytecode in the overlay:"
+            printf '%s\n' "$stray"
+            exit 1
+          fi
+
+      # systemd-analyze verify is the only checker the unit files have, and it
+      # reaches outside them: it resolves ExecStart against the host's
+      # filesystem, where nothing this image ships exists, and so reports every
+      # path as missing.  That is noise, and so is a missing dependency.  What
+      # fails the step is the wording systemd uses for the unit file itself
+      # being wrong - "fatal error" is what it prints when it will refuse to
+      # start the unit at all.  Everything is printed either way, so the reason
+      # is in the log whether the step passed or failed.
+      - name: Verify the unit files
+        run: |
+          status=0
+          for unit in rootfs/overlay/etc/systemd/system/*.service \
+              rootfs/overlay/etc/systemd/system/*.socket; do
+            output=$(systemd-analyze verify "$unit" 2>&1) || true
+            printf '%s\n' "$output"
+            if printf '%s' "$output" | grep -Eq 'fatal error|Unknown lvalue|Invalid (setting|value)|Failed to parse'; then
+              echo "::error file=$unit::the unit file has a syntax error"
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Fetch locked BSP sources
         run: make BOARD=${{ matrix.board }} BUILD_TYPE="${BUILD_TYPE}" fetch
