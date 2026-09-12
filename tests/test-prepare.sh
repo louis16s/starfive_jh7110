@@ -290,11 +290,9 @@ fi
 
 # A timezone the board does not have is a board whose clock is wrong, and a
 # name it never resolves is the warning this whole phase exists to remove.
-printf 'TIMEZONE=Not/AZone\n' > "$sandbox/etc/jh7110/board.conf.next"
 cp "$sandbox/etc/jh7110/board.conf" "$sandbox/etc/jh7110/board.conf.bak"
-cat "$sandbox/etc/jh7110/board.conf.bak" "$sandbox/etc/jh7110/board.conf.next" \
+sed 's|^TIMEZONE=.*|TIMEZONE=Not/AZone|' "$sandbox/etc/jh7110/board.conf.bak" \
     > "$sandbox/etc/jh7110/board.conf"
-rm -f "$sandbox/etc/jh7110/board.conf.next"
 reset
 if run_prepare > /dev/null 2>&1; then
     fail 'an unknown timezone was accepted'
