@@ -87,7 +87,8 @@ while :; do
 done
 
 rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
-chmod 0755 "$rootfs_dir/usr/libexec/jh7110-firstboot"
+chmod 0755 "$rootfs_dir/usr/libexec/jh7110-prepare" \
+    "$rootfs_dir/usr/libexec/jh7110-console-setup"
 
 install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
@@ -164,8 +165,10 @@ Acquire::https::Timeout "15";
 EOF
 
 install -d -m 0755 "$rootfs_dir/etc/systemd/system/multi-user.target.wants"
-ln -s ../jh7110-firstboot.service \
-    "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-firstboot.service"
+ln -s ../jh7110-prepare.service \
+    "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-prepare.service"
+ln -s ../jh7110-console-setup.service \
+    "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-console-setup.service"
 
 qemu_target="$rootfs_dir/usr/bin/qemu-riscv64-static"
 cleanup_qemu() {
@@ -206,7 +209,7 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             LC_MESSAGES="$DEFAULT_LOCALE"
         passwd --lock root
         systemctl preset-all
-        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-firstboot jh7110-pvr zramswap
+        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-prepare jh7110-console-setup jh7110-pvr zramswap
         systemctl set-default graphical.target
         # smartd is useful when a SMART-capable disk is attached, but it is
         # not a boot prerequisite and exits noisily on SD/eMMC-only boards.

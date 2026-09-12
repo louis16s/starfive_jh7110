@@ -1,0 +1,32 @@
+[Unit]
+Description=JH7110 interactive first-run setup (console)
+Documentation=https://github.com/louis16s/starfive_jh7110
+# The account the desktop logs in with does not exist until this has run, so
+# this is the one unit that still owns the console and still comes before the
+# greeter.  It is kept as the recovery path after the graphical setup exists:
+# a board whose desktop cannot start must still be able to create a user.
+After=local-fs.target systemd-logind.service jh7110-prepare.service
+Wants=jh7110-prepare.service
+Before=display-manager.service getty@tty1.service
+Conflicts=getty@tty1.service
+ConditionPathExists=!/var/lib/jh7110/oobe.done
+
+[Service]
+Type=oneshot
+Environment=TERM=linux
+# The dialog waits for a person, and a killed prompt would leave the board with
+# no usable account at all.  This is the behaviour the graphical setup
+# replaces; until then the desktop cannot start without it.
+TimeoutStartSec=infinity
+ExecStart=/usr/libexec/jh7110-console-setup
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

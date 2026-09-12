@@ -42,12 +42,26 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 ~~~
 
 首次启动设密服务完成后，LightDM 允许手动输入用户名，使用 root 登录。
-桌面仍默认中文、Asia/Shanghai（UTC+8）。首次初始化最多等待 5 分钟；超时后不会继续阻塞 LightDM，但未设密的 root 仍锁定，不能登录。应连接 HDMI 和 USB 键盘重新启动设备完成设密。
+桌面仍默认中文、Asia/Shanghai（UTC+8）。
 
-如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设密界面（它不会转移到串口）：
+首次启动分成两半：机器自己能做的部分由 `jh7110-prepare.service` 在无终端条件下
+完成（板型 hostname 与 `/etc/hosts`、时区、locale、machine-id、SSH host key、
+rootfs 扩容、硬件报告），它最多运行 5 分钟，失败也不会阻塞 LightDM；需要人的部分
+由 `jh7110-console-setup.service` 在 HDMI tty1 等待设密，没有超时，因为超时杀掉
+对话框会让设备没有任何可用账户。
+
+如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设密界面
+（它不会转移到串口）：
 
 ~~~sh
-systemctl restart jh7110-firstboot.service
+systemctl restart jh7110-console-setup.service
+~~~
+
+重新执行机器初始化（hostname、时区、locale、扩容等，全部幂等）：
+
+~~~sh
+sudo rm -f /var/lib/jh7110/prepare.done
+sudo jh7110-prepare
 ~~~
 
 不要在公开环境中复用简单密码；root 通过 SSH 登录也应在首次启动后按需
@@ -173,12 +187,13 @@ unzip -p jh7110-desktop-mars-release.zip image/jh7110-desktop-mars-8g.img.xz \
 sync
 ~~~
 
-镜像包含 GPT、FAT32 /boot 和 ext4 rootfs 分区。镜像不固定为 64GB；首次启动时 jh7110-firstboot.service 使用 growpart 和 resize2fs 将根分区及 ext4 文件系统扩展到目标 TF 卡的最大可用空间。完成后可检查：
+镜像包含 GPT、FAT32 /boot 和 ext4 rootfs 分区。镜像不固定为 64GB；首次启动时 jh7110-prepare.service 使用 growpart 和 resize2fs 将根分区及 ext4 文件系统扩展到目标 TF 卡的最大可用空间。完成后可检查：
 
 ~~~sh
 lsblk
 df -h /
-systemctl status jh7110-firstboot.service
+systemctl status jh7110-prepare.service
+cat /var/lib/jh7110/hardware-report.txt
 ~~~
 
 ## 启动和桌面

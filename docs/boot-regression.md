@@ -54,8 +54,8 @@
 ```sh
 cat /proc/cmdline
 systemctl --failed
-systemctl status jh7110-firstboot lightdm jh7110-pvr
-journalctl -b -u jh7110-firstboot -u lightdm -u jh7110-pvr
+systemctl status jh7110-prepare jh7110-console-setup lightdm jh7110-pvr
+journalctl -b -u jh7110-prepare -u jh7110-console-setup -u lightdm -u jh7110-pvr
 journalctl -b -k
 cat /var/log/lightdm/lightdm.log
 cat /var/log/lightdm/x-0.log

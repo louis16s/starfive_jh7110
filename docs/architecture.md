@@ -176,7 +176,8 @@ The rootfs is generated from Debian Trixie `riscv64` using a pinned snapshot and
 * No copied vendor rootfs.
 * `systemd`, NetworkManager, SSH, sudo, journald, udev, dbus, polkit, locales and PipeWire/WirePlumber as normal packages.
 * `zh_CN.UTF-8` and `en_US.UTF-8` generated explicitly.
-* Board hostname set by `jh7110-firstboot.service`, not baked permanently into a common rootfs.
+* Board hostname written by `jh7110-prepare.service` (and shipped in the image's
+  `/etc/hostname` and `/etc/hosts`), not baked permanently into a common rootfs.
 
 The rootfs is the same package manifest for both boards. Board-specific packages are additive and selected by profile. APT remains the owner of ordinary Debian libraries and desktop components.
 
@@ -189,35 +190,51 @@ Initial image layout is GPT with a board-independent partition contract:
 | p1 | 512 MiB | FAT32 | U-Boot-visible boot files, DTBs, kernels, initrds |
 | p2 | remaining image | ext4 | Debian rootfs |
 
-The image file is intentionally not sized to 8GB RAM. It has a minimum build size and supports larger target media. `growpart` and `resize2fs` run once by `jh7110-firstboot.service`; the service records completion and disables itself. Bootloader SPI contents are separate board artifacts and are not blindly embedded into a generic disk image.
+The image file is intentionally not sized to 8GB RAM. It has a minimum build size and supports larger target media. `growpart` and `resize2fs` run once by `jh7110-prepare.service`, which records
+`/var/lib/jh7110/prepare.done`; the unit's `ConditionPathExists` skips it on every
+later boot. Removing that file, or running `/usr/libexec/jh7110-prepare` by hand,
+repeats the whole sequence. Bootloader SPI contents are separate board artifacts and are not blindly embedded into a generic disk image.
 
 ## Services and first boot
 
-`jh7110-firstboot.service` performs only idempotent first-boot work:
+First boot is split along the line that matters: what a machine can do on its
+own, and what needs a person.
 
-1. Prompt for a root password on tty1, before anything else that can fail. The
-   image ships a locked root account, so any later failure would otherwise
-   strand the user at a login prompt with no usable account.
-2. Set board-specific hostname.
-3. Configure locale/timezone defaults.
-4. Ensure machine-id and SSH host keys exist.
-5. Grow the root filesystem.
-6. Generate a hardware report.
-7. Record completion and disable itself.
+`jh7110-prepare.service` (oneshot, `TimeoutStartSec=300`, no tty,
+`ConditionPathExists=!/var/lib/jh7110/prepare.done`) is the machine half:
 
-The service is `Type=oneshot` with `TimeoutStartSec=infinity`: a finite start
-timeout can fire while the password dialog is still on screen, which kills the
-prompt and leaves root locked. `Before=getty@tty1.service` plus
-`Conflicts=getty@tty1.service` is the "this unit owns tty1 until it finishes"
-idiom; adding `After=` for the same unit would contradict the `Before=` and make
-systemd drop one of the jobs.
+1. Write the board's name with `jh7110_set_system_hostname`, which writes
+   `/etc/hostname` **and** `/etc/hosts` and then verifies with `getent hosts`.
+   A board whose two files disagree prints `sudo: unable to resolve host` on
+   every command.
+2. Configure timezone, locale and the default language.
+3. Ensure machine-id and SSH host keys exist (they are removed from the image).
+4. Grow the root filesystem (`growpart` status 1 means "nothing to do").
+5. Write `/var/lib/jh7110/hardware-report.txt`.
+6. Record `/var/lib/jh7110/prepare.done`.
+
+It is ordered `Before=display-manager.service` so the greeter shows the board's
+own name, and it is deliberately not a dependency of `graphical.target`: a
+resize or locale failure must not cost the user the desktop.
+
+`jh7110-console-setup.service` is the half that needs a person. It owns tty1 for
+as long as it runs - `Before=getty@tty1.service` plus
+`Conflicts=getty@tty1.service` is the "this unit owns the terminal until it
+finishes" idiom, and adding `After=` for the same unit would contradict the
+`Before=` and make systemd drop one of the jobs - and it is `Type=oneshot` with
+`TimeoutStartSec=infinity`, because a start timeout that fires while the dialog
+is on screen kills the prompt and leaves the board with no usable account. It
+runs `jh7110-prepare` first when `prepare.done` is missing, so it can complete a
+board whose preparation never finished, and it is the recovery path for a board
+whose graphical setup cannot start. It is skipped once
+`/var/lib/jh7110/oobe.done` exists.
 
 `jh7110-info` is an installed read-only report; `jh7110-config` and
 `jh7110-selftest` are not implemented yet. A report tool reads board identity
 from the DT `compatible`/`model`, kernel and firmware metadata, and never infers
 Mars from a VisionFive 2 compatible string. It must exit zero on a board that is
-missing an attribute, because firstboot runs it under `set -e` to record the
-hardware report.
+missing an attribute, because `jh7110-prepare` runs it under `set -e` to record
+the hardware report.
 
 ## CI and reproducibility
 

@@ -21,37 +21,68 @@ class BootConfig(unittest.TestCase):
             self.assertIn("@KERNEL_DTB@", template)
             self.assertIn(compatible, read(f"configs/{board}.conf"))
 
-    def test_password_service_survives_interactive_setup(self):
+    def test_machine_preparation_runs_without_asking_anything(self):
         unit = configparser.ConfigParser(interpolation=None)
-        unit.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-firstboot.service")
-        # First boot asks for a root password on the console.  A finite start
-        # timeout fires while the dialog is on screen, and a killed prompt
-        # leaves the image's locked root account locked, so the service must be
-        # allowed to wait for the user.
+        unit.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-prepare.service")
+        # Everything that can be done without a person is done without one:
+        # this unit must never take the console, and it must not be able to
+        # wait for input that nothing can give it.
+        self.assertNotIn("TTYPath", unit["Service"])
+        self.assertIn("StandardInput", unit["Service"])
+        self.assertEqual(unit["Service"]["StandardInput"], "null")
+        self.assertNotEqual(unit["Service"]["TimeoutStartSec"], "infinity")
+        self.assertNotIn("Conflicts", unit["Unit"])
+        self.assertEqual(
+            unit["Unit"]["ConditionPathExists"], "!/var/lib/jh7110/prepare.done"
+        )
+        script = read("rootfs/overlay/usr/libexec/jh7110-prepare")
+        for interactive in ("whiptail", "chvt", "--passwordbox", "TERM=linux"):
+            self.assertNotIn(interactive, script)
+        self.assertIn("jh7110_set_system_hostname", script)
+        self.assertIn("systemd-machine-id-setup", script)
+        self.assertIn("ssh-keygen -A", script)
+        # The resize is a machine step: growpart exits 1 to say the partition
+        # already fills the card, and that must not fail the boot.
+        self.assertNotIn("PARTNUM", script)
+        self.assertIn("--output PARTN", script)
+        self.assertIn('resize2fs "$root_source"', script)
+        self.assertIn("growpart_status", script)
+        self.assertNotIn("lsblk --help | grep -qw PARTN", read("scripts/build-rootfs.sh"))
+
+    def test_interactive_setup_survives_waiting_for_a_person(self):
+        unit = configparser.ConfigParser(interpolation=None)
+        unit.read(ROOT / "rootfs/overlay/etc/systemd/system/jh7110-console-setup.service")
+        # The console setup asks for a password.  A finite start timeout fires
+        # while the dialog is on screen, and a killed prompt leaves the image's
+        # locked root account locked, so this unit must be allowed to wait for
+        # the user.  It is the recovery path as well as the first-run path.
         self.assertEqual(unit["Service"]["Environment"], "TERM=linux")
         self.assertEqual(unit["Service"]["TTYPath"], "/dev/tty1")
         self.assertEqual(unit["Service"]["TimeoutStartSec"], "infinity")
         self.assertNotIn("RuntimeMaxSec", unit["Service"])
+        self.assertEqual(unit["Service"]["ExecStart"], "/usr/libexec/jh7110-console-setup")
+        self.assertIn("jh7110-prepare.service", unit["Unit"]["After"])
+        self.assertEqual(
+            unit["Unit"]["ConditionPathExists"], "!/var/lib/jh7110/oobe.done"
+        )
         # The unit must own tty1 while it runs: before the getty so the two
         # cannot race for the console, and never after it, which would
         # contradict the ordering and make systemd drop the job.
         self.assertEqual(unit["Unit"]["Conflicts"], "getty@tty1.service")
         self.assertIn("getty@tty1.service", unit["Unit"]["Before"])
         self.assertNotIn("getty@tty1.service", unit["Unit"].get("After", ""))
-        script = read("rootfs/overlay/usr/libexec/jh7110-firstboot")
-        self.assertNotIn("PARTNUM", script)
-        self.assertIn("--output PARTN", script)
-        self.assertNotIn("lsblk --help | grep -qw PARTN", read("scripts/build-rootfs.sh"))
-        self.assertIn('resize2fs "$root_source"', script)
+        script = read("rootfs/overlay/usr/libexec/jh7110-console-setup")
         self.assertIn("chvt 1", script)
         # The account is unlocked before anything else that can fail, and the
         # password is measured in characters, not bytes of the C-locale console.
         self.assertLess(
-            script.index("setup_root_password\n"),
-            script.index('resize2fs "$root_source"'),
+            script.index("setup_root_password\n"), script.index(': > "$DONE_FILE"')
         )
         self.assertNotIn("passwd --unlock root", script)
         self.assertIn("LC_ALL=C.UTF-8 wc -m", script)
+        # This path must be able to run on a board whose prepare unit never
+        # finished, so it is what completes the machine half.
+        self.assertIn("/usr/libexec/jh7110-prepare", script)
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
 
@@ -59,9 +90,10 @@ class BootConfig(unittest.TestCase):
         # The board's name lives in two files, and sudo resolves it through the
         # second one: a first boot that only sets /etc/hostname is the "sudo:
         # unable to resolve host" warning on every later command.
-        script = read("rootfs/overlay/usr/libexec/jh7110-firstboot")
-        self.assertIn("jh7110_set_system_hostname", script)
-        self.assertNotIn("hostnamectl set-hostname", script)
+        for script in ("jh7110-prepare", "jh7110-console-setup"):
+            script_text = read(f"rootfs/overlay/usr/libexec/{script}")
+            self.assertIn("jh7110_set_system_hostname", script_text)
+            self.assertNotIn("hostnamectl set-hostname", script_text)
         library = read("rootfs/overlay/usr/lib/jh7110/common.sh")
         self.assertIn('"$JH7110_ETC/hostname"', library)
         self.assertIn('"$JH7110_ETC/hosts"', library)

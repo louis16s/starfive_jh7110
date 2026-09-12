@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL_RELEASE = '6.12.0-jh7110'
 
-# jh7110-firstboot records this output under `set -e`, so the diagnostic has to
+# jh7110-prepare records this output under `set -e`, so the diagnostic has to
 # survive a board that is missing any single attribute.
 MEMINFO = """MemTotal:        8123456 kB
 MemFree:         6123456 kB
@@ -151,7 +151,7 @@ class BoardInfo(unittest.TestCase):
 
     def test_runs_on_a_host_without_any_board(self):
         # Degrading to unknown/SKIP everywhere is the only acceptable failure
-        # mode for a tool firstboot calls under `set -e`.
+        # mode for a tool the prepare unit calls under `set -e`.
         text = (ROOT / 'rootfs/overlay/usr/bin/jh7110-info').read_text()
         result = subprocess.run(['bash', '-c', text], env=self.env,
                                 text=True, capture_output=True)

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # Read-only hardware report for Mars and VisionFive 2.
 #
-# Every attribute is best effort.  jh7110-firstboot runs this under `set -e`
+# Every attribute is best effort.  jh7110-prepare runs this under `set -e`
 # to record the first-boot hardware report, so a diagnostic must not be able to
 # abort the boot: a board whose DT lacks an attribute, or a kernel without a
 # DRM driver, prints unknown/SKIP instead of failing.

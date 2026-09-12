@@ -1,0 +1,29 @@
+[Unit]
+Description=JH7110 machine preparation
+# The machine is not itself until this has run: the name, the timezone and the
+# locale it writes are what the desktop and the greeter read.  It is ordered
+# before the display manager so the greeter shows the board's own name, and it
+# is deliberately not a dependency of graphical.target - a board whose resize
+# or locale generation fails must still reach the desktop, where the user can
+# do something about it.
+After=local-fs.target systemd-logind.service
+Before=display-manager.service
+ConditionPathExists=!/var/lib/jh7110/prepare.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Finite, unlike the interactive unit this replaces.  Nothing here asks a
+# question, so nothing here is allowed to wait for a person: a machine that
+# cannot finish preparing itself in five minutes is one to look at over the
+# serial console.  The unit is skipped once prepare.done exists, and can be
+# re-run by hand after removing it.
+TimeoutStartSec=300
+TimeoutStopSec=30
+ExecStart=/usr/libexec/jh7110-prepare
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

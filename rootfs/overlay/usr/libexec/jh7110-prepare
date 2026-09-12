@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Machine preparation for a JH7110 board.
+#
+# This is the half of first boot that nobody has to be present for: the board's
+# name, its clock, its own SSH host keys, its locale and the size of its root
+# filesystem.  It runs without a terminal - it must never take the console, ask
+# a question or wait for a person - because the desktop queues up behind it.
+#
+# Every step is idempotent by its own check rather than by the state file, so
+# re-running the whole script by hand is safe:
+#
+#     sudo jh7110-prepare
+#
+# The state file shortens the next boot; it is not what makes this correct.
+# Remove it to run the whole sequence again.
+set -Eeuo pipefail
+
+readonly STATE_DIR=/var/lib/jh7110
+readonly BOARD_CONFIG=/etc/jh7110/board.conf
+readonly DONE_FILE="$STATE_DIR/prepare.done"
+
+die() {
+    echo "jh7110-prepare: $*" >&2
+    exit 1
+}
+
+[[ $(id -u) -eq 0 ]] || die "must run as root"
+[[ -r "$BOARD_CONFIG" ]] || die "missing $BOARD_CONFIG"
+# shellcheck source=/dev/null
+source "$BOARD_CONFIG"
+# shellcheck source=/dev/null
+source /usr/lib/jh7110/common.sh
+
+install -d -m 0755 "$STATE_DIR"
+
+# The board's name.  /etc/hostname on its own is not the name: sudo, hostname
+# -f and every other caller resolves it through /etc/hosts, so a board whose
+# two files disagree prints "unable to resolve host" on every later command.
+# A name that does not resolve *yet* is reported rather than fatal - the
+# desktop is still usable, and the setup the user goes through writes it again.
+jh7110_set_system_hostname "$(jh7110_default_hostname)" && hostname_status=0 || hostname_status=$?
+case $hostname_status in
+    0) ;;
+    3) jh7110_log "the hostname does not resolve yet; first-run setup writes it again" ;;
+    *) die "could not set the system hostname (status $hostname_status)" ;;
+esac
+
+# The clock.  The timezone file and the symlink are both written because the
+# tools and the kernel read different ones.
+timezone_name=${TIMEZONE:-}
+[[ -n "$timezone_name" && -f "/usr/share/zoneinfo/$timezone_name" ]] \
+    || die "invalid timezone: ${TIMEZONE:-unset}"
+ln -sfn "/usr/share/zoneinfo/$timezone_name" /etc/localtime
+printf '%s\n' "$timezone_name" > /etc/timezone
+
+# The identities that must belong to this board and to no other: the machine id
+# and the SSH host keys are created here because the image ships without them.
+if [[ ! -s /etc/machine-id ]]; then
+    systemd-machine-id-setup
+fi
+ssh-keygen -A
+
+# The image is built with the supported locales already generated; a board
+# whose locale archive was lost still boots in a usable encoding if they are
+# generated again here, which costs a few seconds once.
+read -r -a supported_locales <<< "${SUPPORTED_LOCALES:-${DEFAULT_LOCALE:-en_US.UTF-8}}"
+if command -v locale-gen >/dev/null 2>&1 && (( ${#supported_locales[@]} > 0 )); then
+    locale-gen "${supported_locales[@]}"
+fi
+if command -v update-locale >/dev/null 2>&1; then
+    update-locale LANG="${DEFAULT_LOCALE:-zh_CN.UTF-8}" \
+        LANGUAGE="${DEFAULT_LANGUAGE:-zh_CN:zh:en_US:en}" \
+        LC_MESSAGES="${DEFAULT_LOCALE:-zh_CN.UTF-8}"
+fi
+
+# The image is not sized to the medium it is written to.  growpart on an
+# already-grown partition exits 1 to say there was nothing to do, which is a
+# success for this step; anything else is a real failure.
+root_source=$(findmnt --noheadings --output SOURCE /)
+if [[ -b "$root_source" ]] && command -v growpart >/dev/null 2>&1; then
+    parent_device=$(lsblk --noheadings --output PKNAME "$root_source" | awk 'NF { print "/dev/" $1; exit }')
+    partition_number=$(lsblk --noheadings --output PARTN "$root_source" | awk 'NF { print; exit }')
+    if [[ -n "$parent_device" && -n "$partition_number" ]]; then
+        if growpart "$parent_device" "$partition_number"; then
+            :
+        else
+            growpart_status=$?
+            [[ "$growpart_status" -eq 1 ]] || die "growpart failed with status $growpart_status"
+        fi
+    fi
+fi
+[[ -b "$root_source" ]] || die "root is not a block device: $root_source"
+[[ $(findmnt --noheadings --output FSTYPE /) == ext4 ]] || die "expected ext4 root"
+# e2fsprogs is explicitly installed; do not rely on systemd's optional growfs
+# helper.  resize2fs on a filesystem that already fills its partition is a
+# no-op, so this is the one step that needs no state to be idempotent.
+resize2fs "$root_source" || die "could not grow the root filesystem"
+
+# The hardware report is diagnostic and this script runs under `set -e`.
+# jh7110-info itself never fails on a missing attribute, but the redirect can
+# still fail on a full or read-only state directory, and losing the report must
+# not cost the user the rest of the boot.
+if command -v jh7110-info >/dev/null 2>&1; then
+    jh7110-info > "$STATE_DIR/hardware-report.txt" \
+        || jh7110_log "could not write the hardware report"
+fi
+
+# Written last: everything above ran, so the next boot can skip them.
+: > "$DONE_FILE"
+jh7110_log "machine preparation complete"

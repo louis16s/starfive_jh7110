@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Interactive first-run setup on the console.
+#
+# This is the half of first boot that needs a person: the account the desktop
+# is going to use and the password that protects it.  Everything a machine can
+# do by itself lives in jh7110-prepare, which this runs first when it has not
+# run yet.
+#
+# It keeps the console for as long as it runs - one virtual terminal, no
+# greeter on top - and it is also the recovery path: after the graphical setup
+# exists, this is what a board falls back to when the desktop cannot start, and
+# it can be run by hand at any time:
+#
+#     sudo jh7110-console-setup
+#
+# Remove /var/lib/jh7110/oobe.done to run it again on the next boot.
+set -Eeuo pipefail
+
+readonly STATE_DIR=/var/lib/jh7110
+readonly BOARD_CONFIG=/etc/jh7110/board.conf
+readonly DONE_FILE="$STATE_DIR/oobe.done"
+
+die() {
+    echo "jh7110-console-setup: $*" >&2
+    exit 1
+}
+
+[[ $(id -u) -eq 0 ]] || die "must run as root"
+[[ -r "$BOARD_CONFIG" ]] || die "missing $BOARD_CONFIG"
+# shellcheck source=/dev/null
+source "$BOARD_CONFIG"
+# shellcheck source=/dev/null
+source /usr/lib/jh7110/common.sh
+
+install -d -m 0755 "$STATE_DIR"
+
+# The machine may be half-prepared: this may be the only thing that ever runs
+# on a board whose boot failed before the prepare unit finished.  A failure
+# here is reported and does not stop the account from being created - a user
+# who can log in is what makes the board recoverable - and prepare.done stays
+# absent, so the next boot tries the machine half again.
+if [[ ! -e "$STATE_DIR/prepare.done" && -x /usr/libexec/jh7110-prepare ]]; then
+    /usr/libexec/jh7110-prepare \
+        || jh7110_log "machine preparation failed; continuing with the account setup"
+fi
+
+setup_root_password() {
+    local password confirmation state
+    # Linux VT fonts cannot render the desktop's CJK fonts. Use readable
+    # console text; the installed desktop keeps its Chinese locale.
+    local LC_ALL=C
+    export LC_ALL TERM=linux
+
+    [[ "${DEFAULT_USER:-root}" == root ]] || die "only root default user is supported"
+    state=$(passwd -S root | awk '{print $2}')
+    case "$state" in
+        P)
+            return
+            ;;
+        L|LK|NP)
+            ;;
+        *)
+            die "cannot determine root password state: $state"
+            ;;
+    esac
+
+    chvt 1 || die "cannot activate setup console tty1"
+
+    command -v whiptail >/dev/null 2>&1 \
+        || die "whiptail is required for first-boot password setup"
+
+    while :; do
+        password=$(whiptail \
+            --title "JH7110 first boot" \
+            --passwordbox "Set the root password (at least 8 characters):" \
+            10 72 3>&1 1>&2 2>&3) || die "password setup cancelled"
+        confirmation=$(whiptail \
+            --title "JH7110 first boot" \
+            --passwordbox "Confirm the root password:" \
+            10 72 3>&1 1>&2 2>&3) || die "password confirmation cancelled"
+
+        # The console locale is C so the Linux VT font can render the dialog,
+        # and under C ${#password} counts bytes: a three-character CJK password
+        # would satisfy an eight-character minimum.  Count characters instead.
+        password_length=$(printf '%s' "$password" | LC_ALL=C.UTF-8 wc -m)
+        if (( password_length < 8 )); then
+            whiptail --title "Password too short" \
+                --msgbox "Use at least 8 characters." 8 60
+            continue
+        fi
+        if [[ "$password" != "$confirmation" ]]; then
+            whiptail --title "Passwords differ" \
+                --msgbox "Please enter matching passwords." 8 60
+            continue
+        fi
+        # chpasswd writes a hash, which already clears the locked state the
+        # image ships with; a separate `passwd --unlock` would only add a way
+        # for this step to fail after the password has been accepted.
+        if ! printf 'root:%s\n' "$password" | chpasswd; then
+            unset password confirmation
+            die "failed to set root password"
+        fi
+        unset password confirmation
+        echo "Password configured. Starting the desktop."
+        break
+    done
+}
+
+# Prompt for the password before anything else that can fail.  The image is
+# built with a locked root account, so every later step in this script - an
+# invalid timezone in board.conf, a partition table that cannot be grown - is a
+# step that would otherwise strand the user on a login prompt with no usable
+# account.  setup_root_password returns immediately once a password is set, so
+# re-running this service after a later failure does not ask twice.
+setup_root_password
+
+# The name is prepared by the machine half, but a board that never got that far
+# still has to answer to something a person can type, and the console is where
+# the user is asked about it.
+jh7110_set_system_hostname "$(jh7110_default_hostname)" \
+    || die "could not set the system hostname"
+
+: > "$DONE_FILE"
+echo "Setup complete. Starting the desktop."

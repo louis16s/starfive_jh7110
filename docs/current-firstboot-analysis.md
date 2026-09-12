@@ -287,6 +287,29 @@ host key 用 `ssh-keygen -A`（已存在就跳过）、`growpart` 容忍 1。
 * 未覆盖：真实板子的 HDMI/串口行为与 `sudo` 实际输出需要上板验证；host-side 只能证到
   “两个文件一致 + `getent` 能解析”。
 
+### Phase 2（P1）：机器初始化与交互式设置分离
+
+提交：`refactor(firstboot): split machine preparation from interactive setup`
+
+* 新增 `usr/libexec/jh7110-prepare` + `jh7110-prepare.service`：无终端
+  （`StandardInput=null`，无 `TTYPath`，不 `Conflicts` getty）、`TimeoutStartSec=300`
+  有限超时、`ConditionPathExists=!/var/lib/jh7110/prepare.done`。内容：hostname/`/etc/hosts`
+  （Phase 1 的库）、时区、locale、machine-id、SSH host key、growpart/resize2fs、
+  硬件报告 `/var/lib/jh7110/hardware-report.txt`。每步自带幂等检查，`prepare.done`
+  只用于跳过下次启动。
+* 交互部分保留为 `usr/libexec/jh7110-console-setup` + `jh7110-console-setup.service`
+  （原 `jh7110-firstboot`），状态文件 `oobe.done`。它在 `prepare.done` 缺失时先调用
+  `jh7110-prepare`，所以机器半初始化的板子仍然能靠这条路径走完；这一步是 Phase 5
+  tty9 recovery 的基础。
+* 两个 unit 都 `Before=display-manager.service`，都 `WantedBy=multi-user.target`；
+  prepare 不是 `graphical.target` 的依赖，失败不拦住桌面。
+* 删除 `jh7110-firstboot.service` 与 `jh7110-firstboot`；构建脚本、CI shellcheck
+  列表、README、docs/architecture.md、docs/boot-regression.md、docs/graphics.md、
+  docs/build.md 里的引用同步更新。
+* **本阶段仍保留**：console setup 用 tty1 且 `TimeoutStartSec=infinity`，因为在
+  Phase 4 的 GUI OOBE 落地前，它是唯一的建账户路径，桌面没有账户也无法使用。
+  Phase 4 用图形设置接管、Phase 5 把它降级为 tty9 fallback 之后，这一条会消失。
+
 ### 明确不做
 
 * 不改 boot stack：U-Boot、OpenSBI、kernel、DTB、分区布局、`extlinux.conf`
