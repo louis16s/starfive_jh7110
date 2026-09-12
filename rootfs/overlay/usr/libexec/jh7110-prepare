@@ -15,8 +15,17 @@
 # Remove it to run the whole sequence again.
 set -Eeuo pipefail
 
-readonly STATE_DIR=/var/lib/jh7110
-readonly BOARD_CONFIG=/etc/jh7110/board.conf
+# Where the machine keeps its state, and where /etc is.  On a board both are
+# the real paths and the environment sets neither; the host-side tests point
+# them at a sandbox so that the sequence below can be run twice in a row
+# without a board, which is the only way to check that running it twice is
+# harmless.  The names are the ones common.sh already uses for the same reason.
+readonly STATE_DIR=${JH7110_STATE_DIR:-/var/lib/jh7110}
+readonly ETC_DIR=${JH7110_ETC:-/etc}
+# Read from under here, and written nowhere: the timezone database is the one
+# thing this script looks at outside the state directory and /etc.
+readonly ROOT=${JH7110_ROOT:-}
+readonly BOARD_CONFIG="$ETC_DIR/jh7110/board.conf"
 readonly DONE_FILE="$STATE_DIR/prepare.done"
 
 die() {
@@ -28,8 +37,10 @@ die() {
 [[ -r "$BOARD_CONFIG" ]] || die "missing $BOARD_CONFIG"
 # shellcheck source=/dev/null
 source "$BOARD_CONFIG"
+# The shared helpers, which the tests point at the checkout rather than at the
+# installed copy - the same override the wizard's loader uses.
 # shellcheck source=/dev/null
-source /usr/lib/jh7110/common.sh
+source "${JH7110_LIB:-/usr/lib/jh7110}/common.sh"
 
 install -d -m 0755 "$STATE_DIR"
 
@@ -48,14 +59,17 @@ esac
 # The clock.  The timezone file and the symlink are both written because the
 # tools and the kernel read different ones.
 timezone_name=${TIMEZONE:-}
-[[ -n "$timezone_name" && -f "/usr/share/zoneinfo/$timezone_name" ]] \
+[[ -n "$timezone_name" && -f "$ROOT/usr/share/zoneinfo/$timezone_name" ]] \
     || die "invalid timezone: ${TIMEZONE:-unset}"
-ln -sfn "/usr/share/zoneinfo/$timezone_name" /etc/localtime
-printf '%s\n' "$timezone_name" > /etc/timezone
+ln -sfn "/usr/share/zoneinfo/$timezone_name" "$ETC_DIR/localtime"
+printf '%s\n' "$timezone_name" > "$ETC_DIR/timezone"
 
 # The identities that must belong to this board and to no other: the machine id
 # and the SSH host keys are created here because the image ships without them.
-if [[ ! -s /etc/machine-id ]]; then
+# The machine id is generated once and never again - a board that got a new one
+# on every boot would look like a different machine to DHCP, to the journal and
+# to everything that keys off it.
+if [[ ! -s "$ETC_DIR/machine-id" ]]; then
     systemd-machine-id-setup
 fi
 ssh-keygen -A

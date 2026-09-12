@@ -16,6 +16,7 @@ check:
 	bash tests/test-diagnostics.sh
 	bash tests/test-greeter.sh
 	bash tests/test-kernel-merge.sh
+	bash tests/test-prepare.sh
 	python3 tests/test-oobe-backend.py
 	python3 tests/test-oobe-wizard.py
 	python3 tests/test-gpu-runtime.py
