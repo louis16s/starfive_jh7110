@@ -255,6 +255,15 @@ EOF
 umount "$boot_mount"
 umount "$root_mount"
 
+# What the passes below are about to edit is a filesystem the kernel has just
+# written and released, and it has to be sound before it is edited: the repair
+# after the inode pass answers every question e2fsck asks, so an error that was
+# in the image before this line would be repaired rather than reported.  -n
+# forces the full check - a filesystem that is marked clean is otherwise passed
+# over without looking - and writes nothing.
+e2fsck -fn "$root_device" \
+    || die "the root filesystem was not clean when the kernel released it"
+
 python3 - "$boot_device" "$SOURCE_DATE_EPOCH" <<'PY'  # esp-times
 import os
 import struct
@@ -528,6 +537,9 @@ for number, _ in found:
     # flag in the bottom two, so they take a plain number rather than a time: an
     # @ in front of it is refused, and debugfs prints its complaint and runs the
     # next command anyway.
+    # The generation this replaces does not only live in the inode: it is part
+    # of the seed every block that belongs to the inode is checksummed with, and
+    # the repair below is what makes those checksums true again.
     lines.append(f'set_inode_field <{number}> generation 0\n')
     for field in ('atime_extra', 'mtime_extra', 'ctime_extra', 'crtime_extra'):
         lines.append(f'set_inode_field <{number}> {field} 0\n')
@@ -540,6 +552,32 @@ debugfs -w -f "$inode_commands" "$root_device" > /dev/null \
     || die "debugfs could not write the inode timestamps"
 rm -f "$inode_commands"
 inode_commands=
+
+# Zeroing the generation is not a matter between an inode and its own checksum.
+# Every directory block, every htree index block and every extent tree block the
+# kernel wrote while the rootfs was copied in carries a checksum seeded with the
+# inode it belongs to: the kernel folds the inode number and then the generation
+# into the filesystem's checksum seed, keeps the result in the inode's
+# i_csum_seed, and hands it to ext4_dirblock_csum, ext4_dx_csum and
+# ext4_extent_block_csum.  Replacing the generation invalidates every one of
+# them at once, and no debugfs command recomputes any: after the write above,
+# the filesystem above the inode table holds checksums over generations that are
+# no longer there and e2fsck -fn reports a directory block on every page of a
+# rootfs.  e2fsck is also what repairs them, and what reads the finished image
+# back below, so it is the tool that puts the filesystem back in agreement with
+# itself.
+#
+# It runs after every inode has been written, because what it repairs is what
+# that write changed, and before the superblock is pinned below, because it
+# stamps the times of what it repairs and counts what it writes into the
+# lifetime counter the loop below zeroes.  Status 1 says it repaired something,
+# which is what this build expects; 4 and above say errors are left.
+e2fsck_status=0
+e2fsck -f -y "$root_device" > /dev/null || e2fsck_status=$?
+(( e2fsck_status < 4 )) \
+    || die "e2fsck could not put the filesystem back in agreement with the inode pass"
+printf 'inode-times: e2fsck rechecked the filesystem after the generation change (status %s)\n' \
+    "$e2fsck_status"
 
 # The order matters: debugfs restamps s_wtime when it closes the filesystem, so
 # a wtime written anywhere but last is overwritten by the moment the command

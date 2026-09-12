@@ -300,6 +300,32 @@ written; the `tune2fs` call that follows writes the epoch into it too, from
 clock. The mount count is left as the kernel left it, since both builds mount
 the root filesystem exactly once.
 
+The filesystem the kernel released is checked once before any of that, with
+`e2fsck -fn`. The repair described below answers every question e2fsck asks, so
+an error that was in the image before that line would be repaired rather than
+reported and the build would publish it; `-n` writes nothing, and it is also
+what forces the full check, since a filesystem that is marked clean is otherwise
+passed over unread.
+
+Replacing `i_generation` is not a matter between an inode and its own checksum.
+The kernel folds the inode number and then the generation into the filesystem's
+checksum seed, keeps the result in the inode's `i_csum_seed` (`fs/ext4/inode.c`,
+"Precompute checksum seed for inode metadata") and hands it to
+`ext4_dirblock_csum`, `ext4_dx_csum` and `ext4_extent_block_csum`: every
+directory block, every htree index block and every extent tree block written
+while the rootfs was copied in carries a checksum over the generation the pass
+replaces. The first version of the pass changed the generation alone, and CI
+answered with a directory block on page after page of the rootfs, thirty-four
+htree roots and an extent block - every one of them sound in content and failing
+only on the checksum. No debugfs command recomputes one, so `e2fsck -f -y` runs
+between the inode pass and the pinning of the superblock: after the write,
+because the checksums it repairs are the ones that write invalidates, and before
+the pinning, because it stamps the times of what it repairs and counts what it
+writes into the lifetime counter the loop below zeroes. It restamps the blocks
+rather than dropping what they index - a directory that had an htree keeps it -
+and a status below 4 is the build's own answer that the filesystem is in
+agreement with itself again.
+
 Each of those writes is followed by a read-back that does not trust the tool
 that made it, because debugfs prints its complaint about a field it did not
 accept on its opening line and then runs the next command, so its status says

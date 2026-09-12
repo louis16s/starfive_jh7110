@@ -481,6 +481,43 @@ class ImageNormalisation(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertLess(unmounted, self.text.index(marker))
 
+    def test_the_state_the_kernel_released_is_checked_before_a_pass_edits_it(self):
+        # The repair after the inode pass answers every question e2fsck asks, so
+        # damage that was in the image before that line would be repaired rather
+        # than reported, and a build would publish it.  The filesystem the kernel
+        # handed over is checked first, by a pass that writes nothing - the -n is
+        # the whole point of it, and it is also what forces the full check, since
+        # a filesystem that is marked clean is otherwise passed over unread.
+        unmounted = self.text.index('umount "$root_mount"\n')
+        guard = self.text.index(
+            'e2fsck -fn "$root_device" \\\n'
+            '    || die "the root filesystem was not clean when the kernel released it"')
+        self.assertLess(unmounted, guard)
+        self.assertLess(guard, self.text.index('# esp-times'))
+
+    def test_the_generation_change_is_repaired_before_the_superblock_is_pinned(self):
+        # The generation is not private to the inode: the kernel folds it into
+        # the seed of every directory block, htree index block and extent tree
+        # block it writes, so the inode pass leaves those checksums over a value
+        # that is no longer there.  That is what failed CI, and this is the line
+        # that answers it.  It has to come after the write that caused it and
+        # before the pass that pins the superblock, which stamps the times of
+        # what it repaired and counts what it wrote into the lifetime counter the
+        # loop below zeroes.
+        write = self.text.index(
+            'debugfs -w -f "$inode_commands" "$root_device"')
+        repair = self.text.index('e2fsck -f -y "$root_device"')
+        self.assertLess(write, repair)
+        self.assertLess(repair, self.text.index('# superblock-times'))
+        # 0 and 1 both say the filesystem is in agreement at the end of the run;
+        # 4 and above say it is not, and the build has to stop there rather than
+        # publish a filesystem e2fsck has given up on.
+        self.assertIn('(( e2fsck_status < 4 ))', self.text)
+        # The read-only check at the end is still the gate, and still runs after
+        # the last write to either device.
+        self.assertIn('e2fsck -fn "$root_device" || die "the root filesystem did '
+                      'not pass e2fsck -fn"', self.text)
+
 
 if __name__ == '__main__':
     unittest.main()
