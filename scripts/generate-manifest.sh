@@ -26,6 +26,14 @@ mkdir -p "$output_dir/packages"
 sha256_file() {
     local path=$1 digest
     [[ -f "$path" ]] || die "cannot hash missing file: $path"
+    # These are the files CI uploads and users download, and CI uploads them as
+    # the unprivileged runner user while this script has usually been run under
+    # sudo.  A root-owned 0600 artifact is invisible to both, so refuse it here
+    # rather than letting the artifact upload fail after the image has already
+    # been transferred.  `find` is used because -perm is the same on BSD and
+    # GNU, while stat(1) takes different flags on each.
+    [[ -z "$(find "$path" ! -perm -o=r -print -quit)" ]] \
+        || die "published artifact is not world-readable: $path"
     digest=$(sha256sum -- "$path" | awk '{print $1}')
     [[ -n "$digest" ]] || die "sha256sum produced no digest for $path"
     printf '%s' "$digest"
@@ -62,6 +70,12 @@ gpu_package=$(find "$output_dir/packages" -maxdepth 1 -type f \
 # a failed run must never replace a complete manifest with a partial one.
 manifest_tmp=$(mktemp "$output_dir/.build-manifest.XXXXXX")
 trap 'rm -f "$manifest_tmp"' EXIT
+# mktemp always creates its file 0600, and `mv` would carry that mode onto the
+# published manifest.  CI stages the manifest with `sudo make manifest` and the
+# upload step then runs as the unprivileged runner user, which cannot read a
+# 0600 root-owned file: the upload of a board's whole artifact set failed with
+# EACCES on this file alone, after 800 MB of image had already been sent.
+chmod 0644 "$manifest_tmp"
 
 {
     printf 'project=%s\n' "$PROJECT_NAME"
@@ -125,4 +139,6 @@ trap 'rm -f "$manifest_tmp"' EXIT
 
 mv "$manifest_tmp" "$manifest"
 trap - EXIT
+[[ -z "$(find "$manifest" ! -perm -o=r -print -quit)" ]] \
+    || die "manifest is not world-readable: $manifest"
 printf 'manifest: %s\n' "$manifest"
