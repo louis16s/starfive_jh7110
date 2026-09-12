@@ -80,7 +80,23 @@ install -d -m 0755 \
     "$stage_dir/DEBIAN" \
     "$stage_dir/usr/share/doc/$package_name" \
     "$stage_dir/usr/lib/systemd/system" \
-    "$stage_dir/etc/systemd/system/multi-user.target.wants"
+    "$stage_dir/etc/systemd/system/multi-user.target.wants" \
+    "$stage_dir/etc/initramfs-tools/hooks"
+
+# The PVR kernel driver probes during initramfs, before the real rootfs is
+# mounted. Ship the exact firmware in every generated initramfs so a package
+# install cannot silently degrade to "firmware not found" at boot.
+printf '%s\n' \
+    '#!/bin/sh' \
+    'set -eu' \
+    '. /usr/share/initramfs-tools/hook-functions' \
+    'for firmware in /usr/lib/firmware/rgx.fw.* /usr/lib/firmware/rgx.sh.*; do' \
+    '    [ -s "$firmware" ] || continue' \
+    '    firmware_name=${firmware#/usr}' \
+    '    install -D -m 0644 "$firmware" "${DESTDIR}${firmware_name}"' \
+    'done' \
+    > "$stage_dir/etc/initramfs-tools/hooks/jh7110-pvr-firmware"
+chmod 0755 "$stage_dir/etc/initramfs-tools/hooks/jh7110-pvr-firmware"
 
 printf '%s\n' \
     'Package: jh7110-pvr-rogue' \
@@ -97,6 +113,10 @@ printf '%s\n' \
     '#!/bin/sh' \
     'set -eu' \
     'ldconfig' \
+    'if command -v update-initramfs >/dev/null 2>&1; then' \
+    '    set -- /boot/initrd.img-*' \
+    '    [ -e "$1" ] && update-initramfs -u -k all' \
+    'fi' \
     > "$stage_dir/DEBIAN/postinst"
 chmod 0755 "$stage_dir/DEBIAN/postinst"
 

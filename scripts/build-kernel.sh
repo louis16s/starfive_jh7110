@@ -37,7 +37,7 @@ kernel_make() {
 }
 
 kernel_make "$KERNEL_DEFCONFIG"
-for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV; do
+for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV ZRAM; do
     "$kernel_source/scripts/config" --file "$output_dir/.config" --enable "$symbol"
 done
 kernel_make olddefconfig
@@ -59,7 +59,25 @@ if [[ "$board" == mars ]]; then
         "$output_dir/mars-desktop.dts"
 fi
 }
+
+patch_8g_memory_dtb() {
+    local dtb_path memory_reg
+    command -v fdtput >/dev/null 2>&1 || die "missing fdtput"
+    command -v fdtget >/dev/null 2>&1 || die "missing fdtget"
+    dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
+    [[ -f "$dtb_path" ]] || die "missing selected DTB: $dtb_path"
+
+    # Both target boards in this project are the 8GB variants. The locked BSP
+    # DTS defaults to a 4GB memory node, while U-Boot has already verified the
+    # actual 8GB LPDDR4 population. Keep the patch explicit and validate it.
+    fdtput -t x "$dtb_path" /memory@40000000 reg 0 40000000 2 0
+    memory_reg=$(fdtget -t x "$dtb_path" /memory@40000000 reg)
+    [[ "$memory_reg" == "0 40000000 2 0" ]] \
+        || die "selected DTB does not describe 8GB RAM: $memory_reg"
+}
+
 build_desktop_dtb
+patch_8g_memory_dtb
 
 package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 package_output_root="$REPO_ROOT/$OUTPUT_ROOT/$board"
@@ -70,6 +88,7 @@ kernel_make KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
 # Packaging may invoke dtbs again; restore the board-specific desktop DTB
 # consumed by the image assembler and validate the final output.
 build_desktop_dtb
+patch_8g_memory_dtb
 dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
 for node in /display-subsystem /soc/dc8200@29400000 /soc/hdmi@29590000 /soc/gpu@18000000; do
     [[ "$(fdtget "$dtb_path" "$node" status)" == okay ]] \
