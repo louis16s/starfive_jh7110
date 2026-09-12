@@ -1,6 +1,6 @@
 [Unit]
 Description=jh7110 first-run setup backend socket
-Documentation=man:jh7110-oobe-backend(8)
+Documentation=https://github.com/louis16s/starfive_jh7110/blob/main/docs/oobe.md
 
 [Socket]
 ListenStream=/run/jh7110/oobe.sock

@@ -1,6 +1,6 @@
 [Unit]
 Description=jh7110 first-run setup backend
-Documentation=https://github.com/louis16s/starfive_jh7110
+Documentation=https://github.com/louis16s/starfive_jh7110/blob/main/docs/oobe.md
 # Socket activation: the backend is started by the first connection and is not
 # a dependency of anything that boots.  A board that never runs the wizard
 # never runs this either, and the first boot cannot be held up by it.

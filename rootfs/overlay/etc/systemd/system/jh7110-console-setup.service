@@ -1,6 +1,6 @@
 [Unit]
 Description=JH7110 interactive setup on the recovery console (tty9)
-Documentation=https://github.com/louis16s/starfive_jh7110
+Documentation=https://github.com/louis16s/starfive_jh7110/blob/main/docs/troubleshooting.md
 # The graphical setup runs in the greeter session and is the normal path; this
 # is the one that works when the desktop cannot start at all - no display, no
 # GTK, a board reached over the serial console.  It is deliberately not part of
