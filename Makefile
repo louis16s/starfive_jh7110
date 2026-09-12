@@ -14,6 +14,7 @@ check:
 	bash tests/test-hostname.sh
 	bash tests/test-account.sh
 	bash tests/test-kernel-merge.sh
+	python3 tests/test-oobe-backend.py
 	python3 tests/test-gpu-runtime.py
 	python3 tests/test-build-reproducibility.py
 	python3 tests/test-boot-config.py
