@@ -286,6 +286,34 @@ class BootConfig(unittest.TestCase):
         self.assertNotIn("BusID", config)
         self.assertIn("TimeoutStartSec=30", read("scripts/build-gpu-package.sh"))
 
+    def test_the_desktop_configuration_parses(self):
+        # LightDM reads this as an ini file and ignores any line it does not
+        # understand, which is the worst way to be wrong: a key with a typo in
+        # it takes effect by not taking effect, and the setting it was supposed
+        # to change stays at whatever the default is.  The file is parsed here
+        # and its keys are checked against the ones that exist, so a mistake is
+        # a failure and not a silently different desktop.
+        known = {
+            "user-session",
+            "greeter-session",
+            "greeter-hide-users",
+            "greeter-show-manual-login",
+            "allow-guest",
+        }
+        lightdm = configparser.RawConfigParser(strict=True)
+        lightdm.read_string(
+            read("rootfs/overlay/etc/lightdm/lightdm.conf.d/50-jh7110.conf")
+        )
+        self.assertEqual(lightdm.sections(), ["Seat:*"])
+        self.assertEqual(set(lightdm["Seat:*"]), known)
+        self.assertEqual(lightdm["Seat:*"]["user-session"], "xfce")
+        # The two that decide who can get in, spelled out here because a typo
+        # in either would leave the greeter offering a name box whose only
+        # extra name is root.
+        self.assertEqual(lightdm["Seat:*"]["greeter-hide-users"], "false")
+        self.assertEqual(lightdm["Seat:*"]["greeter-show-manual-login"], "false")
+        self.assertEqual(lightdm["Seat:*"]["allow-guest"], "false")
+
     def test_the_chroot_payload_is_one_string(self):
         # The customisation script is one single-quoted argument, so a single
         # quote anywhere inside it ends the argument early and turns the rest
