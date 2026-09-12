@@ -86,10 +86,14 @@ while :; do
     sleep 10
 done
 
-# .DS_Store files exist in the checkout of anyone who has opened the tree in
-# Finder and are not part of the image; copying one in would give the rootfs a
-# file nothing references.
-rsync -a --chown=root:root --exclude=.DS_Store "$overlay_dir/" "$rootfs_dir/"
+# Files that exist in a checkout but are not part of the image: .DS_Store from
+# anyone who has opened the tree in Finder, and bytecode from anyone who has
+# imported the wizard module locally.  Neither references anything, and the
+# image's file times are pinned to the commit, so bytecode the build host wrote
+# has no business being in it.
+rsync -a --chown=root:root \
+    --exclude=.DS_Store --exclude=__pycache__ --exclude='*.pyc' \
+    "$overlay_dir/" "$rootfs_dir/"
 # Git records the executable bit, but the overlay is also copied from working
 # trees that were edited on a filesystem that does not, so the mode each
 # helper must have is stated here rather than assumed.
@@ -102,6 +106,8 @@ chmod 0755 "$rootfs_dir/usr/libexec/jh7110-prepare" \
     "$rootfs_dir/usr/bin/jh7110-oobe" \
     "$rootfs_dir/usr/bin/jh7110-info" \
     "$rootfs_dir/usr/bin/jh7110-test-graphics" \
+    "$rootfs_dir/usr/bin/jh7110-diagnostics" \
+    "$rootfs_dir/usr/bin/jh7110-welcome" \
     "$rootfs_dir/usr/local/sbin/jh7110-mirror"
 # polkit reads its rules as root and requires that nobody else can write them,
 # and the chroot below asserts that; a checkout with a stricter umask would
@@ -305,6 +311,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # nothing can answer.  --check imports python3-gi and GTK 3 and opens
         # no display, which is what makes it usable here.
         test -x /usr/bin/jh7110-oobe
+        test -x /usr/bin/jh7110-diagnostics
+        test -x /usr/bin/jh7110-welcome
+        # The menu entry is how the welcome text is found on the desktop; a
+        # desktop file that does not name an existing program is a menu item
+        # that does nothing when it is clicked.
+        test -s /usr/share/applications/jh7110-welcome.desktop
+        grep -q "^Exec=/usr/bin/jh7110-welcome$" /usr/share/applications/jh7110-welcome.desktop
         test -x /usr/libexec/jh7110-oobe-backend
         test -s /usr/lib/jh7110/oobe.py
         jh7110-oobe --check
