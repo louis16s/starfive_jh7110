@@ -11,6 +11,21 @@ def read(name):
     return (ROOT / name).read_text()
 
 
+def chroot_payload():
+    """The lines of the one customisation payload in scripts/build-rootfs.sh."""
+    lines = read("scripts/build-rootfs.sh").splitlines()
+    openings = [i for i, line in enumerate(lines) if "/bin/bash -Eeuc '" in line]
+    if len(openings) != 1:
+        raise AssertionError("expected exactly one chroot payload")
+    start = openings[0]
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].strip() == "'"), None
+    )
+    if end is None:
+        raise AssertionError("the chroot payload is never closed")
+    return lines[start + 1 : end], start
+
+
 class BootConfig(unittest.TestCase):
     def test_console_and_board_separation(self):
         for board, compatible in (("mars", "milkv,mars"), ("visionfive2", "starfive,visionfive-2")):
@@ -320,19 +335,36 @@ class BootConfig(unittest.TestCase):
         # of the block into extra words on the command line - which bash
         # accepts, and which then runs something that is not the script that
         # was written.  Nothing inside may use one.
-        lines = read("scripts/build-rootfs.sh").splitlines()
-        openings = [i for i, line in enumerate(lines) if "/bin/bash -Eeuc '" in line]
-        self.assertEqual(len(openings), 1, "expected exactly one chroot payload")
-        start = openings[0]
-        end = next(
-            (i for i in range(start + 1, len(lines)) if lines[i].strip() == "'"),
-            None,
-        )
-        self.assertIsNotNone(end, "the chroot payload is never closed")
-        payload = lines[start + 1 : end]
+        payload, start = chroot_payload()
         self.assertGreater(len(payload), 50, "the chroot payload looks truncated")
         for offset, line in enumerate(payload, start=start + 2):
             self.assertNotIn("'", line, f"line {offset} would close the payload early")
+
+    def test_the_payload_looks_for_its_own_files_where_the_overlay_puts_them(self):
+        # The payload runs inside the chroot, at the end of a rootfs install
+        # that takes most of an hour, and a path that is not there ends the
+        # build with nothing but an exit status.  The overlay is what puts this
+        # project's files into that chroot, so the path a check names has to be
+        # the path the overlay ships - which is what a check written from
+        # memory gets wrong.  A file a package provides instead would be listed
+        # here, as would one the payload creates itself.
+        elsewhere = {
+            "/var/log/jh7110-oobe.log",  # created by the install above it
+        }
+        payload, _start = chroot_payload()
+        named = {
+            word.rstrip('")')  # a check that names the path inside a command
+            for line in payload
+            for word in line.split()
+            if word.startswith("/") and "jh7110" in word
+        }
+        named -= elsewhere
+        self.assertGreater(len(named), 10, f"the payload scan found little: {named}")
+        for path in sorted(named):
+            self.assertTrue(
+                (ROOT / "rootfs/overlay" / path.lstrip("/")).exists(),
+                f"{path} is not in the overlay at that path",
+            )
 
     def test_runtime_probe_uses_systemd_executable(self):
         script = read("scripts/install-kernel-into-rootfs.sh")

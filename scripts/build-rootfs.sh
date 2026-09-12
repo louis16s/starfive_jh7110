@@ -223,6 +223,12 @@ chroot "$rootfs_dir" /usr/bin/env -i \
     DEFAULT_HOSTNAME="$DEFAULT_HOSTNAME" \
     GPU_DEB_NAME="$gpu_deb_name" \
     /bin/bash -Eeuc '
+        # Almost every check below is silent when it passes, so a failure
+        # would end the build with nothing but an exit status - which is how a
+        # path that names a file this image does not ship took a rootfs
+        # install to explain.  -E is set, so the trap reaches the loops, and
+        # what it prints is the check that failed, path and all.
+        trap "echo \"rootfs: check failed: \$BASH_COMMAND\" >&2" ERR
         if [[ -n "${GPU_DEB_NAME:-}" ]]; then
             dpkg --install "/tmp/$GPU_DEB_NAME"
             rm -f "/tmp/$GPU_DEB_NAME"
@@ -335,9 +341,11 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         test -x /usr/libexec/jh7110-oobe-backend
         test -s /usr/lib/jh7110/oobe.py
         jh7110-oobe --check
-        # The socket is how the wizard reaches the backend; without it the
-        # window runs and every page that changes something fails.
-        test -s /usr/lib/systemd/system/jh7110-oobe-backend.socket
+        # The socket is how the wizard reaches the backend, and the unit behind
+        # it is what the first connection starts; without either the window
+        # runs and every page that changes something fails.
+        test -s /etc/systemd/system/jh7110-oobe-backend.socket
+        test -s /etc/systemd/system/jh7110-oobe-backend.service
         # A rule file polkit will ignore is worse than none: the greeter asks
         # for the recovery unit and would be refused without a word about why.
         # polkit evaluates its javascript at runtime and ships no checker, so
