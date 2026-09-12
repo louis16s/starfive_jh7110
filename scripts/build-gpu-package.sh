@@ -76,6 +76,12 @@ if [[ -d "$stage_dir/lib" ]]; then
     [[ ! -e "$stage_dir/lib" ]] || die "unmerged GPU payload remains"
 fi
 
+for firmware_pattern in 'rgx.fw.*' 'rgx.sh.*'; do
+    firmware=$(find "$stage_dir/usr/lib/firmware" -maxdepth 1 -type f \
+        -name "$firmware_pattern" -size +0c -print -quit)
+    [[ -n "$firmware" ]] || die "PVR archive is missing non-empty $firmware_pattern"
+done
+
 install -d -m 0755 \
     "$stage_dir/DEBIAN" \
     "$stage_dir/usr/share/doc/$package_name" \

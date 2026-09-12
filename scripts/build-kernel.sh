@@ -37,15 +37,21 @@ kernel_make() {
 }
 
 kernel_make "$KERNEL_DEFCONFIG"
-for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV ZRAM; do
+for symbol in VT VT_CONSOLE HW_CONSOLE FB FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION HID HID_GENERIC USB_HID INPUT_EVDEV; do
     "$kernel_source/scripts/config" --file "$output_dir/.config" --enable "$symbol"
 done
+# zram-tools loads zram with modprobe during boot, so keep the driver as a
+# module rather than built-in. This also lets the userspace service choose the
+# number of devices and compressor at runtime.
+"$kernel_source/scripts/config" --file "$output_dir/.config" --module ZRAM
 kernel_make olddefconfig
 # Fail before the expensive build if the locked BSP loses graphics support.
 for symbol in DRM DRM_VERISILICON STARFIVE_INNO_HDMI DRM_IMG_ROGUE VT VT_CONSOLE FRAMEBUFFER_CONSOLE DRM_FBDEV_EMULATION USB_HID; do
     grep -qx "CONFIG_${symbol}=y" "$output_dir/.config" \
         || die "required BSP option missing: CONFIG_$symbol"
 done
+grep -qx "CONFIG_ZRAM=m" "$output_dir/.config" \
+    || die "required zram module missing: CONFIG_ZRAM=m"
 kernel_make -j"$jobs" Image modules dtbs
 
 build_desktop_dtb() {

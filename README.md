@@ -190,6 +190,11 @@ U-Boot、OpenSBI 和板级启动介质配置必须按板型区分。当前配置
 - 启动方式：OpenSBI + U-Boot + extlinux.conf
 - /boot：内核、initrd、DTB 和 extlinux 配置
 
+如果 Mars 的 SPI-NOR 已经写入正确的 Mars SPL/FIT，且 U-Boot 环境保存为从
+`mmc 1:1` 读取 `/extlinux/extlinux.conf`，以后只更新 TF/eMMC 镜像通常不需要
+再次刷 U-Boot。只有 SPI-NOR 损坏、环境被清空、启动协议或分区布局改变，或明确
+要升级 bootloader 时，才需要按板型重新刷写对应的 SPL 与 FIT payload。
+
 启动介质、SPI-NOR 写入、UART 接线和板级差异请参阅
 [构建与启动文档](docs/build.md)、[架构说明](docs/architecture.md)、
 [研究记录](docs/research.md) 和 [图形说明](docs/graphics.md)。Mars 的 SPI-NOR

@@ -41,6 +41,8 @@ class BootConfig(unittest.TestCase):
         for symbol in ("VT_CONSOLE", "FRAMEBUFFER_CONSOLE", "DRM_FBDEV_EMULATION", "USB_HID"):
             self.assertIn(symbol, script)
         self.assertIn('required BSP option missing', script)
+        self.assertIn('--module ZRAM', script)
+        self.assertIn('CONFIG_ZRAM=m', script)
 
     def test_safe_login(self):
         config = read("rootfs/overlay/etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf")

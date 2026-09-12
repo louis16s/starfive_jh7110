@@ -157,10 +157,19 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         systemctl preset-all
         systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-firstboot
         systemctl set-default graphical.target
+        # smartd is useful when a SMART-capable disk is attached, but it is
+        # not a boot prerequisite and exits noisily on SD/eMMC-only boards.
+        # Keep smartmontools installed while leaving its daemon opt-in.
+        for service in smartmontools.service smartd.service; do
+            if systemctl cat "$service" >/dev/null 2>&1; then
+                systemctl disable "$service"
+            fi
+        done
         # Validate target binaries and desktop payload before assembling an image.
         for helper in chvt whiptail growpart resize2fs lsblk; do
             command -v "$helper" >/dev/null
         done
+        nft -c -f /etc/nftables.conf
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
         test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop

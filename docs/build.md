@@ -97,6 +97,14 @@ priority order without changing the locked build snapshot.
 
 The image assembler creates a GPT image with a 512 MiB FAT32 `/boot` partition and an ext4 root partition. The image size is a board-profile setting, not a target storage assumption. OpenSBI/U-Boot remain in the board's SPI-NOR boot path; the image carries the kernel, initrd, DTB and `extlinux.conf` only.
 
+Once the board's SPI-NOR contains a working board-specific U-Boot and its saved
+environment selects `mmc 1:1` `/extlinux/extlinux.conf`, updating the image on
+TF/eMMC only replaces the kernel, initrd, DTB and root filesystem. A normal
+image update therefore does not require flashing U-Boot again. Reflash the
+board-specific SPL/FIT pair only after SPI-NOR corruption, an erased U-Boot
+environment, a changed partition/boot protocol, or an explicitly selected
+bootloader update. Never use the other board's payload.
+
 Before assembly, install one kernel package into the rootfs so that an initrd exists. An explicitly generated initrd can also be supplied:
 
 ```sh
