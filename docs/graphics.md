@@ -65,12 +65,13 @@ HDMI 输出与 GPU 渲染是两条不同路径，软件渲染也可能显示 XFC
 
 镜像不预置可登录账户：root 在构建时被锁定。机器初始化由
 `jh7110-prepare.service` 在无终端条件下完成（hostname、时区、locale、
-machine-id、SSH host key、rootfs 扩容），交互式创建账户仍由
-`jh7110-console-setup.service` 在 HDMI tty1 显示英文界面，账户创建成功后才
-允许 LightDM 启动；LightDM 只列出可登录账户（手动输入用户名已关闭），因此
-root 不能从图形界面登录。没有写入任何固定默认密码。串口维护时可执行
-`systemctl restart jh7110-console-setup.service` 重新进入设置流程，
-或执行 `jh7110-prepare` 重新初始化机器。
+machine-id、SSH host key、rootfs 扩容），创建账户的图形向导
+`jh7110-oobe` 在 greeter 会话里运行，写完 `/var/lib/jh7110/oobe.done` 之后才
+切到真正的登录界面；LightDM 只列出可登录账户（手动输入用户名已关闭），因此
+root 不能从图形界面登录。没有写入任何固定默认密码。没有可用图形界面时
+（或向导连续三次没做完），走 tty9 / 串口上的 `jh7110-console-setup`，
+详见 [首次启动](first-boot.md) 和 [设置向导](oobe.md)；`jh7110-prepare`
+可以随时重跑，重新初始化机器。
 
 ## 2026-09-12 审查后的默认策略
 

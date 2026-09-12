@@ -31,15 +31,16 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 镜像不写入任何固定密码，也不预置可登录的账户：构建时 `passwd --lock root` 把
 root 锁死，首次启动由用户创建一个普通账户，桌面就以这个账户运行。
 
-首次启动会在 HDMI 本地 tty1 显示英文设置界面（Linux 文本控制台没有桌面的中文字体）：
-输入用户名和两次不少于 8 位的密码，确认后才启动 LightDM。密码只经管道交给
-`chpasswd`，不会出现在命令行参数、日志、`/etc/jh7110` 里的任何文件或镜像文件中。
+首次启动会在 HDMI 上显示中文图形设置向导（GTK3，不是文本控制台），走完
+「欢迎 → 网络 → 设备名称 → 用户 → 地区设置 → SSH → 更新 → 硬件检测 → 确认 → 收尾」
+之后才切换到真正的登录界面。密码只从输入框经 Unix socket 交给 root 后端，再由管道
+送给 `chpasswd`，不会出现在命令行参数、日志、临时文件或镜像文件中。
 
-默认账户为：
+账户为：
 
 ~~~text
-用户名：jh7110（可在设置界面改）
-密码：首次启动时由用户设置
+用户名：由用户在向导里设置（输入框提示 jh7110）
+密码：首次启动时由用户设置，不少于 8 个字符
 权限：sudo（sudo/video/render/audio/netdev/plugdev/bluetooth/dialout）
 ~~~
 
@@ -51,10 +52,21 @@ root 保持 locked：它不能从 LightDM 登录（greeter 只列可登录账户
 首次启动分成两半：机器自己能做的部分由 `jh7110-prepare.service` 在无终端条件下
 完成（板型 hostname 与 `/etc/hosts`、时区、locale、machine-id、SSH host key、
 rootfs 扩容、硬件报告），它最多运行 5 分钟，失败也不会阻塞 LightDM；需要人的部分
-由 `jh7110-console-setup.service` 在 HDMI tty1 等待输入，没有超时，因为超时杀掉
-对话框会让设备没有任何可用账户。
+由 greeter 会话里的图形向导 `jh7110-oobe` 完成。向导以 `lightdm` 账户运行，
+**不是 root**，改机器的事全部通过 `/run/jh7110/oobe.sock` 交给
+`jh7110-oobe-backend`（root），后端只有一张固定的方法表，没有「执行任意命令」
+这一类。完整路径见 [首次启动](docs/first-boot.md)，向导设计见 [设置向导](docs/oobe.md)。
 
-账户的创建、修复和校验只有一份实现，两条首次启动路径和人工恢复都用它：
+图形界面跑不起来（没有 GTK、没有显示器、只有串口）时，退到控制台恢复路径：
+
+~~~sh
+sudo systemctl start jh7110-console-setup     # 切到 tty9
+sudo jh7110-console-setup                     # 就在当前终端（串口）
+~~~
+
+它**不启用**，也不在启动路径里，所以不会拖慢任何东西。
+
+账户的创建、修复和校验只有一份实现，向导、控制台恢复和人工恢复都用它：
 
 ~~~sh
 # 校验一个用户名是否可以接受（不写系统）
@@ -65,11 +77,10 @@ printf '%s\n' "$password" | sudo /usr/libexec/jh7110-account create alice
 sudo /usr/libexec/jh7110-account check alice
 ~~~
 
-如果已经能通过受信任的恢复方式进入 root shell，可执行下列命令重启本地 HDMI 设置界面
-（它不会转移到串口）：
+想让向导下次登录重新跑一遍（已存在的账户会被修复，不会被删除）：
 
 ~~~sh
-systemctl restart jh7110-console-setup.service
+sudo jh7110-oobe --reset
 ~~~
 
 重新执行机器初始化（hostname、时区、locale、扩容等，全部幂等）：
@@ -140,7 +151,7 @@ Chromium 当前没有预装。Debian Trixie riscv64 没有可直接使用的官�
 - UTC 偏移：UTC+08:00
 - 默认 hostname：jh7110-vf2 或 jh7110-mars
 
-`jh7110-prepare.service` 会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs，写完后放下 `/var/lib/jh7110/prepare.done` 自动跳过自身；创建桌面账户的 `jh7110-console-setup.service` 写 `/var/lib/jh7110/oobe.done`。
+`jh7110-prepare.service` 会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs，写完后放下 `/var/lib/jh7110/prepare.done` 自动跳过自身；创建桌面账户的图形向导 `jh7110-oobe` 写 `/var/lib/jh7110/oobe.done`（该文件是最后一步写的，写入是原子的，掉电不会写出半成品）。
 
 ## 软件源和大陆网络适配
 
@@ -279,7 +290,14 @@ GPU 包可执行 `make BOARD=mars gpu-package`。
 ~~~sh
 jh7110-info            # 板型、内存与 CMA、CPU 调频、内核项、DRM/HDMI、GPU、温度
 jh7110-test-graphics   # 桌面会话内的 DRM/HDMI/Vulkan/OpenGL 验收
+jh7110-diagnostics     # 脱敏诊断包，可以直接附在问题报告里
+jh7110-welcome         # 桌面里的上手说明（应用菜单 → JH7110 上手指南）
 ~~~
+
+`jh7110-diagnostics` 只读，产出一个 tar.gz：每个文件都经过过滤而不是原样复制，
+`psk`、`password`、`secret`、`token`、`authorization` 这些键的值替换成
+`REDACTED`；私钥和 `authorized_keys` 整份不收，并在包内的 README 中列出被略过的
+文件，收件人能分清「没有问题」和「没有读」。
 
 `jh7110-info` 是只读报告，缺失属性一律打印 unknown 或 SKIP，因为首次启动
 服务在 `set -e` 下用它记录硬件报告，诊断工具不能让启动失败。硬件不存在的
@@ -289,17 +307,21 @@ modesetting 且镜像默认 `AccelMethod none`，软件 GLX 是设计路径。
 
 ## 目录和文档
 
+- docs/first-boot.md：从通电到桌面，每一步和各步失败时的行为
+- docs/oobe.md：图形设置向导、权限模型和 tty9 恢复路径
+- docs/troubleshooting.md：按现象排查
 - docs/research.md：官方来源、版本、许可证和风险
 - docs/architecture.md：构建图和板级分离原则
 - docs/build.md：本地构建和 CI
 - docs/graphics.md：HDMI/DRM/GPU 当前状态
+- docs/boot-regression.md：启动链回归记录
 - docs/licenses.md：GPU 等二进制组件的来源、哈希和授权记录
 - sources.lock：源码 commit/tag 锁定
 - configs/hardware-matrix.yaml：板级能力矩阵
 
 ## 已知限制
 
-1. 桌面账户必须在首次启动的 HDMI tty1 创建，串口不显示设置界面；串口可用 root（未解锁时先用恢复方式）运行 `jh7110-console-setup` 手工创建。启动异常见 [HDMI 启动排查](docs/boot-regression.md)。
+1. 桌面账户必须在首次启动时创建。正常路径是 HDMI 上的图形向导；没有可用图形界面时，串口或 tty9 上用 `jh7110-console-setup` 做同样的最小设置，详见 [首次启动](docs/first-boot.md)。启动异常见 [HDMI 启动排查](docs/boot-regression.md)。
 2. PVR 包已纳入构建，但 HDMI、Wayland、Vulkan、VPU、音频和 USB 键鼠仍需真实硬件验收。
 3. Mars 的 NVMe 默认按能力矩阵报告为 SKIP，不能套用 VisionFive 2 的 NVMe 结论。
 4. Chromium 暂未提供官方 riscv64 Trixie 安装包。
