@@ -34,6 +34,12 @@ except ImportError as error:
 
 LOG_FILE = "/var/log/jh7110-oobe.log"
 
+# Turned on by log() the first time the log file cannot be written.  The wizard
+# logs on every step, and one line about a log file that is not there is a
+# diagnosis where one per step is noise in a session log someone is reading for
+# another reason.
+log_file_reported = False
+
 # The graphical stack is imported once, by load_gtk, so that a board without it
 # gets a sentence instead of an ImportError.  Everything below uses these names.
 Gtk = None
@@ -99,11 +105,23 @@ def log(message):
     """
     line = "jh7110-oobe: %s" % message
     print(line, file=sys.stderr)
+    global log_file_reported
     try:
         with open(LOG_FILE, "a") as stream:
             stream.write(line + "\n")
-    except OSError:
-        pass
+    except OSError as error:
+        # The image creates this file for the greeter account, so failing to
+        # write it means something is wrong with the board rather than with
+        # the line just written.  Say so once: the wizard logs on every step,
+        # and one line is a diagnosis where one per step is noise in a session
+        # log a person is reading for another reason.
+        if not log_file_reported:
+            log_file_reported = True
+            print(
+                "jh7110-oobe: 写不进日志文件 %s（%s）；这条只提示一次"
+                % (LOG_FILE, error),
+                file=sys.stderr,
+            )
 
 
 def load_gtk():

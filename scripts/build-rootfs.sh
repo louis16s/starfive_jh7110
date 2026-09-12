@@ -313,6 +313,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         test -x /usr/bin/jh7110-oobe
         test -x /usr/bin/jh7110-diagnostics
         test -x /usr/bin/jh7110-welcome
+        # The wizard runs as lightdm inside the greeter session and appends to
+        # this file.  /var/log belongs to root, so without a file that is
+        # already there and already owned by lightdm, every line the wizard
+        # writes about itself goes nowhere and the troubleshooting page sends
+        # the reader to a file that does not exist.
+        install -o lightdm -g adm -m 0640 /dev/null /var/log/jh7110-oobe.log
+        [[ $(stat -c "%U %G %a" /var/log/jh7110-oobe.log) == "lightdm adm 640" ]]
         # The menu entry is how the welcome text is found on the desktop; a
         # desktop file that does not name an existing program is a menu item
         # that does nothing when it is clicked.

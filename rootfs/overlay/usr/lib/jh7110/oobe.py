@@ -14,6 +14,7 @@ module against a fake backend and a sandbox of files.
 import inspect
 import json
 import os
+import pwd
 import re
 import socket
 import stat
@@ -33,6 +34,11 @@ MIN_PASSWORD_LENGTH = 8
 # setup, so a wizard that cannot start does not restart for ever.  It lives in
 # the greeter account's home because that is where the greeter can write.
 ATTEMPT_LIMIT = 3
+
+# The account the greeter runs as, which the polkit rule names too.  Its home
+# is where the count above ends up, and it is the one home a reset run with
+# sudo does not itself have.
+GREETER_USER = "lightdm"
 
 
 class BackendError(Exception):
@@ -774,24 +780,66 @@ class SetupSession:
 # ---------------------------------------------------------------------------
 # Running the setup again
 # ---------------------------------------------------------------------------
-def reset_paths(state_dir=STATE_DIR, home=os.path.expanduser("~")):
+def greeter_attempts_file(greeter_home=None):
+    """The count of unfinished runs, where the next login will read it.
+
+    The greeter runs as the greeter account and counts there, so this is that
+    account's home.  `None` when this host has no such account and none was
+    given, in which case there is no second file to remove.
+    """
+    if greeter_home is None:
+        try:
+            greeter_home = pwd.getpwnam(GREETER_USER).pw_dir
+        except KeyError:
+            return None
+    return os.path.join(greeter_home, ".jh7110-oobe-attempts")
+
+
+def attempts_files(home, greeter_home=None):
+    """Every file the count of unfinished runs can be in.
+
+    A reset is normally run by a person with `sudo`, whose home is root's, so
+    the file in its own home is not the one that stops the setup from running
+    again.  Leaving the greeter's count alone would keep the board at the
+    limit, and the next login would go to the console recovery instead of the
+    wizard this was run to get back.
+
+    JH7110_ATTEMPTS_FILE moves the greeter's file (the greeter reads the same
+    name), so when it is set it is the only file there is.
+    """
+    override = os.environ.get("JH7110_ATTEMPTS_FILE")
+    if override:
+        return [override]
+    files = [os.path.join(home, ".jh7110-oobe-attempts")]
+    greeter_file = greeter_attempts_file(greeter_home)
+    if greeter_file is not None and greeter_file not in files:
+        files.append(greeter_file)
+    return files
+
+
+def reset_paths(state_dir=STATE_DIR, home=None, greeter_home=None):
+    if home is None:
+        # Read when this runs rather than when the module is imported: a
+        # caller run through sudo has a different home from the one that
+        # imported it, and that is the whole reason this is not a constant.
+        home = os.path.expanduser("~")
     return [
         os.path.join(state_dir, "oobe.done"),
         os.path.join(state_dir, "oobe-state.json"),
-        os.path.join(home, ".jh7110-oobe-attempts"),
+        *attempts_files(home, greeter_home),
     ]
 
 
-def reset(state_dir=STATE_DIR, home=os.path.expanduser("~")):
+def reset(state_dir=STATE_DIR, home=None, greeter_home=None):
     """Let the next boot run the setup again.
 
-    The done file and the state are what stop it; removing both is the whole
-    operation, and the account that exists stays.  A caller running the setup
-    again therefore repairs the account it finds rather than creating a second
-    one.
+    The done file and the state are what stop it; removing those, and the
+    greeter's count of unfinished runs, is the whole operation, and the
+    account that exists stays.  A caller running the setup again therefore
+    repairs the account it finds rather than creating a second one.
     """
     removed = []
-    for path in reset_paths(state_dir, home):
+    for path in reset_paths(state_dir, home, greeter_home):
         try:
             os.unlink(path)
             removed.append(path)

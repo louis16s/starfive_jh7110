@@ -1006,6 +1006,39 @@ class ResetTests(Sandbox):
     def test_resetting_an_untouched_machine_removes_nothing(self):
         self.assertEqual(oobe.reset(self.path("var/lib/jh7110"), self.path("home")), [])
 
+    def test_resetting_clears_the_count_the_next_login_reads(self):
+        # The count lives in the greeter account's home, and a reset is run by
+        # a person with sudo, whose home is root's.  Removing only that home's
+        # file would leave the count at the limit, and the next login would go
+        # to the console instead of the wizard this was run to get back.
+        state_dir = self.path("var/lib/jh7110")
+        greeter_home = self.path("var/lib/lightdm")
+        os.makedirs(state_dir)
+        os.makedirs(greeter_home)
+        attempts = os.path.join(greeter_home, ".jh7110-oobe-attempts")
+        with open(attempts, "w") as stream:
+            stream.write("3\n")
+        removed = oobe.reset(state_dir, self.path("root"), greeter_home=greeter_home)
+        self.assertIn(attempts, removed)
+        self.assertEqual(oobe.setup_attempts(greeter_home), 0)
+
+    def test_a_count_that_was_moved_elsewhere_is_reset_there(self):
+        # The greeter reads JH7110_ATTEMPTS_FILE, so a board that moved the
+        # count is reset where it moved it to, and not in two places at once.
+        home = self.path("root")
+        greeter_home = self.path("var/lib/lightdm")
+        moved = self.path("run/jh7110/attempts")
+        os.makedirs(home)
+        os.makedirs(greeter_home)
+        os.makedirs(os.path.dirname(moved))
+        for path in (moved, os.path.join(greeter_home, ".jh7110-oobe-attempts")):
+            with open(path, "w") as stream:
+                stream.write("3\n")
+        os.environ["JH7110_ATTEMPTS_FILE"] = moved
+        self.addCleanup(os.environ.pop, "JH7110_ATTEMPTS_FILE", None)
+        removed = oobe.reset(self.path("var/lib/jh7110"), home, greeter_home=greeter_home)
+        self.assertEqual(removed, [moved])
+
     def test_attempts_are_counted_and_cleared(self):
         home = self.path("home")
         os.makedirs(home)
@@ -1028,6 +1061,55 @@ class ResetTests(Sandbox):
         path = self.write("oobe.sock", "")
         self.assertFalse(oobe.oobe_socket_ready(path))
         self.assertFalse(oobe.oobe_socket_ready(self.path("nothing")))
+
+
+# ---------------------------------------------------------------------------
+# The log the wizard leaves behind
+# ---------------------------------------------------------------------------
+class LogFileTests(Sandbox):
+    """The wizard writes down what it did, where a person can find it."""
+
+    def setUp(self):
+        super().setUp()
+        # load_wizard_module gets the program itself running, which needs the
+        # toolkit in place; only the window tests need the idle queue.
+        install_fake_gtk()
+
+    def test_a_line_reaches_the_file(self):
+        module = load_wizard_module()
+        log_file = self.path("var/log/jh7110-oobe.log")
+        os.makedirs(os.path.dirname(log_file))
+        module.LOG_FILE = log_file
+        module.log("something happened")
+        with open(log_file) as stream:
+            self.assertIn("jh7110-oobe: something happened", stream.read())
+
+    def test_the_file_that_cannot_be_written_is_reported_once(self):
+        # A directory, so that opening it for append fails whatever the
+        # permissions are: this is the board where the file the image creates
+        # is not there.  The wizard logs on every step, so what it may not do
+        # is say so on every step.
+        module = load_wizard_module()
+        module.LOG_FILE = self.path("not-a-file")
+        os.makedirs(module.LOG_FILE)
+        printed = []
+        module.print = lambda *args, **_kwargs: printed.append(" ".join(map(str, args)))
+        module.log("first")
+        module.log("second")
+        self.assertEqual(len([line for line in printed if module.LOG_FILE in line]), 1)
+        # Both lines are still on standard error, which is the copy LightDM
+        # keeps whatever happens to the file.
+        self.assertEqual(
+            len([line for line in printed if "first" in line or "second" in line]), 2
+        )
+
+    def test_the_documents_send_people_to_the_file_the_wizard_writes(self):
+        # The path is written in three places and read as one: the wizard
+        # appends to it and the troubleshooting pages tell a person to cat it.
+        module = load_wizard_module()
+        for document in ("docs/troubleshooting.md", "docs/oobe.md", "docs/first-boot.md"):
+            with open(os.path.join(REPO, document)) as stream:
+                self.assertIn(module.LOG_FILE, stream.read(), document)
 
 
 # ---------------------------------------------------------------------------
