@@ -86,10 +86,27 @@ while :; do
     sleep 10
 done
 
-rsync -a --chown=root:root "$overlay_dir/" "$rootfs_dir/"
+# .DS_Store files exist in the checkout of anyone who has opened the tree in
+# Finder and are not part of the image; copying one in would give the rootfs a
+# file nothing references.
+rsync -a --chown=root:root --exclude=.DS_Store "$overlay_dir/" "$rootfs_dir/"
+# Git records the executable bit, but the overlay is also copied from working
+# trees that were edited on a filesystem that does not, so the mode each
+# helper must have is stated here rather than assumed.
 chmod 0755 "$rootfs_dir/usr/libexec/jh7110-prepare" \
     "$rootfs_dir/usr/libexec/jh7110-console-setup" \
-    "$rootfs_dir/usr/libexec/jh7110-account"
+    "$rootfs_dir/usr/libexec/jh7110-account" \
+    "$rootfs_dir/usr/libexec/jh7110-set-hostname" \
+    "$rootfs_dir/usr/libexec/jh7110-oobe-backend" \
+    "$rootfs_dir/usr/libexec/jh7110-greeter" \
+    "$rootfs_dir/usr/bin/jh7110-oobe" \
+    "$rootfs_dir/usr/bin/jh7110-info" \
+    "$rootfs_dir/usr/bin/jh7110-test-graphics" \
+    "$rootfs_dir/usr/local/sbin/jh7110-mirror"
+# polkit reads its rules as root and requires that nobody else can write them,
+# and the chroot below asserts that; a checkout with a stricter umask would
+# otherwise produce an image that fails its own check.
+chmod 0644 "$rootfs_dir/etc/polkit-1/rules.d/50-jh7110-oobe.rules"
 
 install -d -m 0755 "$rootfs_dir/etc/jh7110"
 cat > "$rootfs_dir/etc/jh7110/board.conf" <<EOF
@@ -169,8 +186,10 @@ EOF
 install -d -m 0755 "$rootfs_dir/etc/systemd/system/multi-user.target.wants"
 ln -s ../jh7110-prepare.service \
     "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-prepare.service"
-ln -s ../jh7110-console-setup.service \
-    "$rootfs_dir/etc/systemd/system/multi-user.target.wants/jh7110-console-setup.service"
+# jh7110-console-setup is deliberately absent from every .wants directory: it
+# is the recovery path for a board whose desktop cannot start, started by the
+# greeter wrapper or by hand, and putting it in the boot path would be a way
+# for the fallback to hold up the machine it is meant to rescue.
 
 qemu_target="$rootfs_dir/usr/bin/qemu-riscv64-static"
 cleanup_qemu() {
@@ -211,7 +230,22 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             LC_MESSAGES="$DEFAULT_LOCALE"
         passwd --lock root
         systemctl preset-all
-        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-prepare jh7110-console-setup jh7110-pvr zramswap
+        systemctl enable NetworkManager systemd-timesyncd ssh lightdm jh7110-prepare jh7110-pvr zramswap
+        # The wizard talks to the setup backend over this socket, so it is up
+        # before the greeter session starts and the daemon behind it is started
+        # by the first connection rather than at boot.
+        systemctl enable jh7110-oobe-backend.socket
+        # jh7110-console-setup is never enabled: it is the tty9 recovery path a
+        # working desktop never needs.  preset-all could have enabled it, so it
+        # is disabled and then checked - the unit has no [Install] section, and
+        # `disable` on one of those succeeds without doing anything, so the
+        # check is what actually establishes the state.
+        systemctl disable jh7110-console-setup.service >/dev/null 2>&1 || true
+        console_setup_state=$(systemctl is-enabled jh7110-console-setup.service 2>/dev/null || true)
+        if [[ $console_setup_state == enabled* ]]; then
+            echo "rootfs: jh7110-console-setup.service must not be enabled" >&2
+            exit 1
+        fi
         systemctl set-default graphical.target
         # smartd is useful when a SMART-capable disk is attached, but it is
         # not a boot prerequisite and exits noisily on SD/eMMC-only boards.
@@ -257,8 +291,36 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         fi
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
+        # The greeter runs the wrapper, and the wrapper execs the real greeter
+        # once the setup is done, so both have to be in the image: with only
+        # one of them the session either never reaches a login screen or never
+        # reaches the wizard.
         test -s /usr/share/xgreeters/lightdm-gtk-greeter.desktop
+        test -s /usr/share/xgreeters/jh7110-greeter.desktop
+        test -x /usr/libexec/jh7110-greeter
         test -s /etc/X11/xorg.conf.d/20-jh7110-safe-desktop.conf
+        # The first-run setup is how a fresh image gets an account, so the
+        # pieces it is made of are build failures if they are missing rather
+        # than something discovered by a board that boots to a login prompt
+        # nothing can answer.  --check imports python3-gi and GTK 3 and opens
+        # no display, which is what makes it usable here.
+        test -x /usr/bin/jh7110-oobe
+        test -x /usr/libexec/jh7110-oobe-backend
+        test -s /usr/lib/jh7110/oobe.py
+        jh7110-oobe --check
+        # The socket is how the wizard reaches the backend; without it the
+        # window runs and every page that changes something fails.
+        test -s /usr/lib/systemd/system/jh7110-oobe-backend.socket
+        # A rule file polkit will ignore is worse than none: the greeter asks
+        # for the recovery unit and would be refused without a word about why.
+        # polkit evaluates its javascript at runtime and ships no checker, so
+        # what is checked here is what can be: the file is where polkit looks
+        # and only root can rewrite it.
+        test -s /etc/polkit-1/rules.d/50-jh7110-oobe.rules
+        [[ $(stat -c "%U %a" /etc/polkit-1/rules.d/50-jh7110-oobe.rules) == "root 644" ]]
+        # The greeter account is the one the socket is readable by and the one
+        # the wizard runs as, so it has to exist in the image.
+        getent passwd lightdm >/dev/null
         # The desktop GL/EGL stack is Mesa and runs on the CPU: the locked PVR
         # archive contains no EGL runtime at all (only a static libIMGeglsup.a
         # in its staging tree), so there is no vendor EGL for GLVND to load.
