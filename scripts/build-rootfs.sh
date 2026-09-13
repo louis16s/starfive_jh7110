@@ -401,6 +401,13 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         rm -f /var/log/apt/*
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
+        # nvme-cli generates these two in its postinst, and both are random:
+        # the initiator name and host id of one machine.  The image is
+        # installed on many boards, so generated here they would be the same
+        # identity on all of them - and a different one between two builds of
+        # one commit.  The first-boot unit makes them on the board, with the
+        # same "only when missing" check the package itself uses.
+        rm -f /etc/nvme/hostnqn /etc/nvme/hostid
         # mmdebstrap --mode=root copies the host copy of this file into the
         # target so that the chroot can reach its mirror, and left there it is
         # two things the image should not ship: a file that differs between two

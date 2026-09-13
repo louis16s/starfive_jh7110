@@ -208,7 +208,9 @@ own, and what needs a person.
    A board whose two files disagree prints `sudo: unable to resolve host` on
    every command.
 2. Configure timezone, locale and the default language.
-3. Ensure machine-id and SSH host keys exist (they are removed from the image).
+3. Ensure machine-id, SSH host keys and the NVMe host NQN and host id exist
+   (all four are removed from the image, and `nvme` and `uuidgen` generate the
+   last two on the board exactly as nvme-cli's postinst would).
 4. Grow the root filesystem (`growpart` status 1 means "nothing to do").
 5. Write `/var/lib/jh7110/hardware-report.txt`.
 6. Record `/var/lib/jh7110/prepare.done`.
@@ -419,6 +421,15 @@ value in both runs. And the check on the wizard runs with
 `/usr/lib/jh7110/__pycache__/*.pyc` behind: the header of a `.pyc` records the
 mtime of the source it was compiled from, which is the checkout's, and the
 passes below replace every inode time with the epoch afterwards.
+
+Two of the entries above are an identity rather than a leftover, which is why
+the board creates them: `/etc/machine-id` and the SSH host keys, and now
+`/etc/nvme/hostnqn` and `/etc/nvme/hostid` beside them. nvme-cli's postinst
+generates that pair from a random source when the package is installed, so in an
+image they would be the same initiator name on every board written from it, and
+a different one between two builds of one commit. `scripts/build-rootfs.sh`
+removes both, and `jh7110-prepare` generates each on the board with the
+package's own check - only when the file is missing or empty.
 
 One artifact group stays outside that guarantee: the kernel's Debian packages.
 `scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which

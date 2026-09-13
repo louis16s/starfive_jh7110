@@ -124,6 +124,22 @@ cat > "$sandbox/bin/ssh-keygen" <<'STUB'
 log-call ssh-keygen "$@"
 STUB
 
+# The NVMe host NQN and host id are the board's own, like the machine id, and
+# nvme-cli's postinst generates each only when it is missing.  The image ships
+# without them so that the board gets its own; the stubs print values that can
+# be told apart from any other board's.
+cat > "$sandbox/bin/nvme" <<'STUB'
+#!/usr/bin/env bash
+log-call nvme "$@"
+printf 'nqn.2014-08.org.nvmexpress:uuid:sandbox-host-nqn\n'
+STUB
+
+cat > "$sandbox/bin/uuidgen" <<'STUB'
+#!/usr/bin/env bash
+log-call uuidgen "$@"
+printf '11111111-2222-3333-4444-555555555555\n'
+STUB
+
 cat > "$sandbox/bin/locale-gen" <<'STUB'
 #!/usr/bin/env bash
 log-call locale-gen "$@"
@@ -197,10 +213,11 @@ run_prepare() {
     "$prepare_shell" "$prepare"
 }
 
-# Reset to the state just after the image is written: no marker, no machine id,
-# and an empty record of what was called.
+# Reset to the state just after the image is written: no marker, none of the
+# identities the image ships without, and an empty record of what was called.
 reset() {
     rm -f "$sandbox/state/prepare.done" "$sandbox/etc/machine-id" \
+        "$sandbox/etc/nvme/hostnqn" "$sandbox/etc/nvme/hostid" \
         "$sandbox/state/hardware-report.txt"
     : > "$sandbox/calls.log"
 }
@@ -235,6 +252,13 @@ grep -q '^hostnamectl \[set-hostname\] \[jh7110-mars\]' <<< "$(calls)" \
 grep -q '^systemd-machine-id-setup$' <<< "$(calls)" \
     || fail 'the machine id was not generated'
 grep -q '^ssh-keygen \[-A\]$' <<< "$(calls)" || fail 'no SSH host keys were generated'
+[[ "$(cat "$sandbox/etc/nvme/hostnqn")" == \
+    'nqn.2014-08.org.nvmexpress:uuid:sandbox-host-nqn' ]] \
+    || fail 'the NVMe host NQN was not generated'
+[[ "$(cat "$sandbox/etc/nvme/hostid")" == '11111111-2222-3333-4444-555555555555' ]] \
+    || fail 'the NVMe host id was not generated'
+grep -q '^nvme \[gen-hostnqn\]$' <<< "$(calls)" \
+    || fail "nvme was not asked for a host NQN: $(calls)"
 grep -q '^locale-gen \[zh_CN.UTF-8\] \[en_US.UTF-8\]$' <<< "$(calls)" \
     || fail "the supported locales were not generated: $(calls)"
 grep -q '^update-locale' <<< "$(calls)" || fail 'the default locale was not set'
@@ -258,6 +282,8 @@ grep -q '^systemd-machine-id-setup$' <<< "$(calls)" \
     && fail 'the machine id was generated a second time'
 [[ "$(cat "$sandbox/etc/machine-id")" == 'sandbox-machine-id' ]] \
     || fail 'a repeated run replaced the machine id'
+grep -qE '^(nvme|uuidgen)' <<< "$(calls)" \
+    && fail 'the NVMe identity was generated a second time'
 [[ -f "$sandbox/state/prepare.done" ]] || fail 'a repeated run did not mark itself done'
 
 # A partition that already fills its disk makes growpart exit 1, which is the

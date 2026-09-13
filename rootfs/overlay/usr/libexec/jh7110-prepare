@@ -74,6 +74,22 @@ if [[ ! -s "$ETC_DIR/machine-id" ]]; then
 fi
 ssh-keygen -A
 
+# The NVMe host NQN and host id belong on that list of identities, and nvme-cli
+# already treats them as one: its postinst generates both only when they are
+# missing or empty, which is why the image is built without them - generated at
+# packaging time they would be the same NQN on every board, and the initiator
+# name of an NVMe-oF connection is what tells the target which machine it is
+# talking to.  The check is the package's own, and a board that never uses
+# NVMe-oF never reads either file.
+if [[ ! -s "$ETC_DIR/nvme/hostnqn" ]] && command -v nvme >/dev/null 2>&1; then
+    install -d -m 0755 "$ETC_DIR/nvme"
+    nvme gen-hostnqn > "$ETC_DIR/nvme/hostnqn" || rm -f "$ETC_DIR/nvme/hostnqn"
+fi
+if [[ ! -s "$ETC_DIR/nvme/hostid" ]] && command -v uuidgen >/dev/null 2>&1; then
+    install -d -m 0755 "$ETC_DIR/nvme"
+    uuidgen > "$ETC_DIR/nvme/hostid" || rm -f "$ETC_DIR/nvme/hostid"
+fi
+
 # The image is built with the supported locales already generated; a board
 # whose locale archive was lost still boots in a usable encoding if they are
 # generated again here, which costs a few seconds once.

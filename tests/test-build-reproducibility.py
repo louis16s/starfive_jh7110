@@ -309,6 +309,16 @@ class BuildWiring(unittest.TestCase):
         text = (ROOT / 'scripts/build-rootfs.sh').read_text().replace('\\\n', ' ')
         self.assertRegex(text, r'rm -f /etc/resolv\.conf')
 
+    def test_rootfs_build_ships_no_nvme_identity_of_the_machine_that_built_it(
+            self):
+        # nvme-cli's postinst generates a host NQN and a host id when the
+        # package is installed, and both are random.  Generated in the image
+        # they would be the same identity on every board the image is written
+        # to, and a different one between two builds of one commit; the
+        # first-boot unit makes them on the board instead.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text().replace('\\\n', ' ')
+        self.assertRegex(text, r'rm -f /etc/nvme/hostnqn /etc/nvme/hostid')
+
     def test_the_wizard_check_leaves_no_bytecode_in_the_image(self):
         # Importing the wizard module writes __pycache__/oobe.cpython-312.pyc
         # beside it, and a .pyc header records the mtime of the source it was
