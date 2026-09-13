@@ -376,6 +376,36 @@ class WorkflowTests(unittest.TestCase):
             "the GPU package is only checked after mmdebstrap has run",
         )
 
+    def test_every_script_the_automation_runs_is_executable_in_git(self):
+        # The smoke job runs ./scripts/verify-rootfs-login.sh, and a file whose
+        # index mode is 0644 is not a program on the runner: the job failed with
+        # "Permission denied" and exit 126 - after the rootfs it had just
+        # checked had been built and every check in it had passed.  Nothing on
+        # the development host notices this: Git applies the mode on the Linux
+        # checkout, and the tree it was written in does not care.
+        invoked = set()
+        for path in [REPO / "Makefile", *sorted((REPO / ".github/workflows").glob("*.yml"))]:
+            invoked.update(
+                re.findall(r"\./scripts/[A-Za-z0-9_.-]+\.sh", path.read_text(encoding="utf-8"))
+            )
+        offenders = []
+        for script in sorted(invoked):
+            entry = subprocess.run(
+                ["git", "ls-files", "-s", "--", script],
+                cwd=REPO,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+            mode = entry[0] if entry else "untracked"
+            if mode != "100755":
+                offenders.append(f"{script} ({mode})")
+        self.assertEqual(offenders, [], "the automation runs a script git does not mark executable")
+        # The list is parsed out of the files that run the scripts, so a parse
+        # that stopped matching would leave nothing to check and pass.
+        self.assertGreaterEqual(len(invoked), 5, "no script invocation was found to check")
+        self.assertIn("./scripts/verify-rootfs-login.sh", invoked)
+
     def test_the_existing_workflows_and_jobs_survive(self):
         for name, job in (
             ("build.yml", "build"),
