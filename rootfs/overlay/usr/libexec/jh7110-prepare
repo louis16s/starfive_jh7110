@@ -22,6 +22,9 @@ set -Eeuo pipefail
 # harmless.  The names are the ones common.sh already uses for the same reason.
 readonly STATE_DIR=${JH7110_STATE_DIR:-/var/lib/jh7110}
 readonly ETC_DIR=${JH7110_ETC:-/etc}
+# The runtime directory sshd is started with.  It is under the same override as
+# the other two so that the host-side tests can run this script without a board.
+readonly RUN_DIR=${JH7110_RUN_DIR:-/run}
 # Read from under here, and written nowhere: the timezone database is the one
 # thing this script looks at outside the state directory and /etc.
 readonly ROOT=${JH7110_ROOT:-}
@@ -70,9 +73,30 @@ printf '%s\n' "$timezone_name" > "$ETC_DIR/timezone"
 # on every boot would look like a different machine to DHCP, to the journal and
 # to everything that keys off it.
 if [[ ! -s "$ETC_DIR/machine-id" ]]; then
-    systemd-machine-id-setup
+    systemd-machine-id-setup || die "could not create the machine id"
 fi
-ssh-keygen -A
+
+# The SSH host keys are the board's other identity, and they are missing from
+# the image for the same reason the machine id is: a key generated on the build
+# host would be the same private key on every board the image is written to.
+# `ssh-keygen -A` creates exactly the key types that are absent and leaves the
+# ones that are there, so a board that has already made them keeps them, one
+# that lost them makes new ones, and running this twice is harmless.  A board
+# that cannot make them is a board with no way in over the network and no way
+# to tell why, so a failure here ends the unit with the reason in the journal
+# rather than being logged and stepped over.
+command -v ssh-keygen >/dev/null 2>&1 \
+    || die "ssh-keygen is missing; the SSH host keys cannot be created"
+ssh-keygen -A || die "could not create the SSH host keys"
+
+# sshd runs behind a privilege separation directory under /run and refuses to
+# start without it - "Missing privilege separation directory: /run/sshd" - and
+# /run is a tmpfs that is empty again on every boot.  ssh.service gets it from
+# the drop-in the image ships, which is what covers the ordinary case; this
+# covers the board where ssh was started by hand or the unit came from
+# somewhere else.  Either way it is the directory, not a key, that is created
+# here: nothing on this side ever generates a host key outside ssh-keygen.
+install -d -m 0755 "$RUN_DIR/sshd"
 
 # The NVMe host NQN and host id belong on that list of identities, and nvme-cli
 # already treats them as one: its postinst generates both only when they are

@@ -34,6 +34,7 @@ check:
 	python3 tests/test-release-assets.py
 	python3 tests/test-shipped-python.py
 	python3 tests/test-documented-commands.py
+	python3 tests/test-console-and-ssh.py
 	./scripts/validate-profile.sh "$(BOARD)"
 	./scripts/host-check.sh
 	./scripts/verify-source-lock.sh

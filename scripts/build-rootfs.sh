@@ -271,10 +271,84 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             fi
         done
         # Validate target binaries and desktop payload before assembling an image.
+        # `id`, `passwd` and `ssh-keygen` are not used by the build - they are
+        # what a person runs on the board afterwards (`id jh7110`,
+        # `passwd -S jh7110`) and what the first boot runs before anyone can
+        # log in, so their absence is a property of this image and is checked
+        # here rather than discovered on the board.
         for helper in chvt whiptail growpart resize2fs lsblk \
-            useradd usermod chpasswd getent; do
+            useradd usermod chpasswd getent id passwd ssh-keygen; do
             command -v "$helper" >/dev/null
         done
+        # The serial console ends in two programs: agetty draws the prompt and
+        # /bin/login is what the prompt hands the terminal to.  Debian moved
+        # login out of util-linux into a package of its own, so an image can
+        # boot as far as the serial port, print the kernel log, and never
+        # offer a login at all.  Both are asserted here, with the PAM stack
+        # /bin/login reads - login without /etc/pam.d/login is a prompt that
+        # refuses every password - because none of the three is anything the
+        # image says it has: they are what the packages in the manifest
+        # happened to install.
+        test -x /bin/login
+        test -s /etc/pam.d/login
+        getty_path=
+        for getty in /sbin/agetty /usr/sbin/agetty; do
+            if [[ -x "$getty" ]]; then
+                getty_path=$getty
+            fi
+        done
+        if [[ -z "$getty_path" ]]; then
+            echo "rootfs: agetty is missing; the serial console has nothing to draw a prompt" >&2
+            exit 1
+        fi
+        # The unit is what starts agetty on the board.  It cannot be started
+        # here - QEMU user-mode is not a booted system, which is why this is a
+        # check on the units rather than on running services - so what is
+        # asserted is that the unit exists and says what the boot will ask it.
+        systemctl cat serial-getty@ttyS0.service >/dev/null
+        # The unit is instantiated by the systemd generator from
+        # `console=ttyS0,115200` in the kernel command line, so it is static
+        # rather than enabled - but a masked one would never be started, and
+        # that is the state worth failing on.  The state is printed either way
+        # so that a build log says which one this image has.
+        getty_state=$(systemctl is-enabled serial-getty@ttyS0.service 2>/dev/null || true)
+        if [[ "$getty_state" == masked ]]; then
+            echo "rootfs: serial-getty@ttyS0.service is masked; nothing would start the serial console" >&2
+            exit 1
+        fi
+        printf "rootfs: serial-getty@ttyS0.service is %s\\n" "${getty_state:-unresolved}"
+        # ssh is the way into a board with no monitor and no serial cable, and
+        # the enable above is what makes it reachable from the first boot.  The
+        # state is read back rather than assumed: an enable that failed, or one
+        # that had no unit to enable, would otherwise be an image that is only
+        # reachable at the end of a serial cable.
+        test -x /usr/sbin/sshd
+        systemctl cat ssh.service >/dev/null
+        ssh_state=$(systemctl is-enabled ssh.service 2>/dev/null || true)
+        if [[ "$ssh_state" != enabled ]]; then
+            echo "rootfs: ssh.service is not enabled (state: ${ssh_state:-unknown})" >&2
+            exit 1
+        fi
+        test -s /etc/systemd/system/ssh.service.d/10-jh7110-runtime-dir.conf
+        test -s /etc/ssh/sshd_config.d/90-jh7110.conf
+        # sshd refuses to parse a configuration it has no host key for, and the
+        # image deliberately ships without them, so the check runs against a
+        # rendered copy of the shipped configuration with one throwaway key.
+        # What is validated is the file - the drop-in included, in the position
+        # sshd reads it - and not the presence of the board keys, which
+        # the first boot creates and which must not exist in the image.
+        sshd_check_dir=$(mktemp -d)
+        ssh-keygen -q -t ed25519 -N "" -f "$sshd_check_dir/host_key" >/dev/null
+        {
+            printf "HostKey %s\\n" "$sshd_check_dir/host_key"
+            cat /etc/ssh/sshd_config
+        } > "$sshd_check_dir/sshd_config"
+        if ! sshd_output=$(sshd -t -f "$sshd_check_dir/sshd_config" 2>&1); then
+            printf "%s\\n" "$sshd_output" >&2
+            rm -rf "$sshd_check_dir"
+            exit 1
+        fi
+        rm -rf "$sshd_check_dir"
         # The desktop account is created by the first-run setup, so the group
         # it uses to become an administrator has to exist in the image.
         getent group sudo >/dev/null
@@ -301,6 +375,37 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             cat /etc/hosts >&2
             exit 1
         fi
+        # The two boards are built from one tree by one recipe, and the profile
+        # is the only thing that decides which of them this image is.  The name
+        # the board answers to is written by that profile, so the check is that
+        # this image carries its own name and not the other board name - a copy
+        # and paste that reached /etc/hostname would otherwise ship a Mars that
+        # calls itself a VisionFive 2.
+        grep -qx "$DEFAULT_HOSTNAME" /etc/hostname
+        if [[ "$DEFAULT_HOSTNAME" == jh7110-mars ]]; then
+            other_hostname=jh7110-vf2
+        else
+            other_hostname=jh7110-mars
+        fi
+        if grep -q "$other_hostname" /etc/hostname /etc/hosts; then
+            echo "rootfs: this image carries the name of the other board: $other_hostname" >&2
+            exit 1
+        fi
+        # The machine id and the SSH host keys belong to the board and to no
+        # other: created at build time they would be one identity shared by
+        # every board the image is written to, so the build removes them and
+        # the first boot creates them.  Both removals are steps that a change
+        # elsewhere can quietly undo, which is what this checks.
+        if [[ -s /etc/machine-id ]]; then
+            echo "rootfs: the image ships a machine id; it belongs on the board" >&2
+            exit 1
+        fi
+        for host_key in /etc/ssh/ssh_host_*; do
+            if [[ -e "$host_key" ]]; then
+                echo "rootfs: the image ships an SSH host key: $host_key" >&2
+                exit 1
+            fi
+        done
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
         # The greeter runs the wrapper, and the wrapper execs the real greeter

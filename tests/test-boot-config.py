@@ -245,14 +245,19 @@ class BootConfig(unittest.TestCase):
         # And sshd refuses root even if a password is ever set for it.  Debian
         # ships an `Include` at the top of sshd_config, so a drop-in is the
         # only way to set this without editing a file a package owns.
-        sshd = [
-            line
-            for line in read(
-                "rootfs/overlay/etc/ssh/sshd_config.d/90-jh7110.conf"
-            ).splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        self.assertEqual(sshd, ["PermitRootLogin no"])
+        sshd = {}
+        for line in read("rootfs/overlay/etc/ssh/sshd_config.d/90-jh7110.conf").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                keyword, _, value = line.partition(" ")
+                sshd[keyword] = value.strip()
+        self.assertEqual(sshd["PermitRootLogin"], "no")
+        # The account the setup creates logs in over ssh with the password it
+        # was given, and root is refused above: the group of accounts that can
+        # log in is every ordinary one and nothing else.
+        self.assertEqual(sshd["PasswordAuthentication"], "yes")
+        for directive in ("AllowUsers", "AllowGroups", "DenyUsers", "DenyGroups"):
+            self.assertNotIn(directive, sshd)
         # The account model is a property of the image, declared in the profile
         # every board shares and checked before a build starts.
         common = read("configs/common.conf")

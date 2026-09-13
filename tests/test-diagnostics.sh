@@ -53,9 +53,11 @@ psk=$WIFI_PSK
 method=auto
 EOF
 
+# The sshd drop-in as the image ships it, so that the report is exercised on
+# the file that will be on the board.
 cat > "$ROOT/etc/ssh/sshd_config.d/90-jh7110.conf" <<'EOF'
 PermitRootLogin no
-PasswordAuthentication no
+PasswordAuthentication yes
 EOF
 
 cat > "$ROOT/etc/lightdm/lightdm.conf.d/50-jh7110.conf" <<'EOF'

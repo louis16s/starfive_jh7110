@@ -34,8 +34,12 @@ export JH7110_LIB="$repo/rootfs/overlay/usr/lib/jh7110"
 export JH7110_ETC="$sandbox/etc"
 export JH7110_STATE_DIR="$sandbox/state"
 export JH7110_ROOT="$sandbox/root"
+# /run is a tmpfs on a board and empty again on every boot; here it is a
+# directory that reset() empties, so the check that the privilege separation
+# directory is recreated is a real one rather than a leftover from a last run.
+export JH7110_RUN_DIR="$sandbox/run"
 export PATH="$sandbox/bin:$PATH"
-mkdir -p "$sandbox/bin" "$sandbox/etc/jh7110" "$sandbox/state" \
+mkdir -p "$sandbox/bin" "$sandbox/etc/jh7110" "$sandbox/state" "$sandbox/run" \
     "$sandbox/root/usr/share/zoneinfo/Asia"
 
 # The sandbox stands in for a board that has a timezone database, an /etc and a
@@ -119,9 +123,17 @@ log-call systemd-machine-id-setup "$@"
 printf 'sandbox-machine-id\n' > "$JH7110_ETC/machine-id"
 STUB
 
+# The host keys are this board's alone and they are made here, so the stub can
+# also refuse: a board that cannot make them is one nobody can reach over the
+# network, and that has to end the sequence rather than be noted and stepped
+# over.
 cat > "$sandbox/bin/ssh-keygen" <<'STUB'
 #!/usr/bin/env bash
 log-call ssh-keygen "$@"
+if [[ ${JH7110_SSH_KEYGEN_FAILS:-0} == 1 ]]; then
+    echo 'ssh-keygen: no space left on device' >&2
+    exit 1
+fi
 STUB
 
 # The NVMe host NQN and host id are the board's own, like the machine id, and
@@ -219,6 +231,7 @@ reset() {
     rm -f "$sandbox/state/prepare.done" "$sandbox/etc/machine-id" \
         "$sandbox/etc/nvme/hostnqn" "$sandbox/etc/nvme/hostid" \
         "$sandbox/state/hardware-report.txt"
+    rm -rf "$sandbox/run/sshd"
     : > "$sandbox/calls.log"
 }
 
@@ -252,6 +265,12 @@ grep -q '^hostnamectl \[set-hostname\] \[jh7110-mars\]' <<< "$(calls)" \
 grep -q '^systemd-machine-id-setup$' <<< "$(calls)" \
     || fail 'the machine id was not generated'
 grep -q '^ssh-keygen \[-A\]$' <<< "$(calls)" || fail 'no SSH host keys were generated'
+# sshd refuses to start without this directory, and /run is a tmpfs that is
+# empty again on every boot - the unit drop-in covers the ordinary case, and
+# this covers a board where ssh was started some other way.
+[[ -d "$sandbox/run/sshd" ]] || fail 'the sshd privilege separation directory was not created'
+find "$sandbox/run/sshd" -maxdepth 0 -perm 0755 > /dev/null \
+    || fail 'the sshd privilege separation directory is not 0755'
 [[ "$(cat "$sandbox/etc/nvme/hostnqn")" == \
     'nqn.2014-08.org.nvmexpress:uuid:sandbox-host-nqn' ]] \
     || fail 'the NVMe host NQN was not generated'
@@ -304,6 +323,18 @@ if GROWPART_STATUS=2 run_prepare > /dev/null 2>&1; then
 fi
 [[ -f "$sandbox/state/prepare.done" ]] \
     && fail 'the board was marked prepared after a step failed'
+
+# A board that cannot make its SSH host keys has no way in over the network, so
+# the failure is the sequence's: the unit fails, the journal says why, and the
+# marker is not written, which leaves the next boot to try again.
+reset
+if JH7110_SSH_KEYGEN_FAILS=1 run_prepare > /dev/null 2> "$sandbox/stderr"; then
+    fail 'a board whose host keys could not be made was treated as prepared'
+fi
+grep -q 'host key' "$sandbox/stderr" \
+    || fail "the host key failure was not reported: $(cat "$sandbox/stderr")"
+[[ -f "$sandbox/state/prepare.done" ]] \
+    && fail 'the board was marked prepared without its host keys'
 
 # The hardware report is diagnostic; it runs under `set -e`, and losing it must
 # not cost the board the rest of the sequence.

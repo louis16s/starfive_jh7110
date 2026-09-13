@@ -87,9 +87,98 @@ jobs:
           esac
           echo "building board=$BOARD build_type=${BUILD_TYPE:-release}"
 
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install check dependencies
+        # Only what reads the files below.  The toolchain belongs to the jobs
+        # that compile, and none of it is needed to parse a shell script, a
+        # package list or a unit file.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
+      - name: Check the workflow files parse
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import glob
+          import yaml
+
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              with open(path, encoding="utf-8") as stream:
+                  yaml.safe_load(stream)
+              print("%s: ok" % path)
+          PY
+
+      # A shell file that does not parse, a unit file systemd will refuse, a
+      # package list that lost the package the serial console needs - each of
+      # these used to be found by a job that had already spent the better part
+      # of an hour compiling, and each is answered here in seconds.
+      - name: Check every shell file parses
+        run: |
+          set -Eeuo pipefail
+          bash -n build.sh
+          find scripts tests rootfs/overlay -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+
+      - name: Check the shipped Python compiles
+        run: |
+          set -Eeuo pipefail
+          # The cache prefix keeps the bytecode out of the overlay the image is
+          # built from; tests/test-shipped-python.py is what would catch it.
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m compileall -q \
+            rootfs/overlay/usr/lib/jh7110 rootfs/overlay/usr/bin
+
+      - name: Check each board is still its own
+        run: |
+          set -Eeuo pipefail
+          ./scripts/validate-profile.sh visionfive2
+          ./scripts/validate-profile.sh mars
+
+      # The ways a board ends up with no way in: /bin/login is not in the
+      # manifest, the ssh drop-in no longer refuses root, the first-boot script
+      # lost the host keys, or a board was given the other board's name.
+      - name: Check the console and ssh are wired up
+        run: python3 tests/test-console-and-ssh.py
+
+  # A rootfs takes minutes; the kernel, U-Boot and the image together take the
+  # better part of an hour.  Everything that can be checked with only a rootfs -
+  # that /bin/login is in it, that sshd is there and enabled, that the board's
+  # own name is in it - is checked here, on its own machine, and the build waits
+  # for it: a missing login prompt is then minutes away rather than an hour.
+  rootfs-smoke:
+    name: Rootfs smoke (${{ matrix.board }})
+    needs: preflight
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJSON(inputs.board == 'visionfive2' && '["visionfive2"]' || inputs.board == 'mars' && '["mars"]' || '["visionfive2","mars"]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            binfmt-support debian-archive-keyring mmdebstrap mount \
+            qemu-user-static rsync util-linux xz-utils
+          sudo update-binfmts --enable
+
+      - name: Build Debian Trixie rootfs
+        run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${{ inputs.build_type || 'release' }} rootfs
+
+      # The same questions the build asks from inside the chroot, asked of the
+      # tree afterwards - and the ones it cannot ask there, like whether the
+      # image ships a machine id or a host key that belong to one board only.
+      - name: Check the rootfs can be logged into
+        run: ./scripts/verify-rootfs-login.sh ${{ matrix.board }}
+
   build:
     name: ${{ matrix.board }}
-    needs: preflight
+    needs: [preflight, rootfs-smoke]
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false

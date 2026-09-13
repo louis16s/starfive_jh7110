@@ -6,6 +6,13 @@ dbus
 e2fsprogs
 locales
 kbd
+# login owns /bin/login and the PAM stack behind it (/etc/pam.d/login).  Debian
+# moved it out of the base system into a package of its own, and nothing this
+# manifest installs depends on it: the serial console reaches agetty and then
+# has no program to hand the terminal to, so the board boots to a login prompt
+# that never appears and cannot be logged into.  Naming it here is what keeps
+# that from being something the first boot of a board has to discover.
+login
 network-manager
 openssh-server
 parted

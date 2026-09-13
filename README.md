@@ -9,22 +9,33 @@
 
 ## 当前状态
 
-Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的基线运行。
-本次更新后的下一次 Actions 构建还会额外生成并安装锁定的 PVR GPU 包：
+2026-09-13 的构建（提交 `114e35ba`，board=mars）成功生成镜像和内核 Debian 包：
 
-- jh7110-desktop-vf2-8g.img.xz
-- jh7110-desktop-mars-8g.img.xz
+- jh7110-desktop-mars-8g.img.xz（另有 .sha256）
 - linux-image-6.12.5+_1.0.0_riscv64.deb
 - linux-headers-6.12.5+_1.0.0_riscv64.deb
 - linux-libc-dev_1.0.0_riscv64.deb
-- jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb（下一次构建起）
+- jh7110-pvr-rogue_1.19.6345021-3_riscv64.deb（已安装进镜像）
+- u-boot、SPL、fw_dynamic.bin、jh7110-milkv-mars.dtb 和 build-manifest.txt
 
-镜像已经包含 Debian 基础系统、XFCE、LightDM、Firefox ESR、Python 3、开发工具、PipeWire、NetworkManager、Podman、Mesa 图形工具和硬件诊断工具；下一次构建还会将获授权的 StarFive PVR runtime 纳入镜像。
+本次只构建了 Mars；VisionFive 2 的镜像要再派发一次 `board=visionfive2`
+或 `board=all` 的构建。
+
+镜像已经包含 Debian 基础系统、XFCE、LightDM、Firefox ESR、Python 3、开发工具、PipeWire、NetworkManager、Podman、Mesa 图形工具、硬件诊断工具，以及获授权的 StarFive PVR runtime。
 
 构建成功不等于实板验收成功。当前仓库仍需在实际 VisionFive 2 和 Mars 上验证 HDMI 1080p60、GPU 硬件渲染、Vulkan、VPU、音频、USB 外设和桌面启动。
 
-已确认 build-36 的根文件系统 `/lib` 链接被内核包解包破坏，缺少运行时 ELF 加载器；
-该镜像不能作为可启动版本使用。修复及实际镜像检查记录见 [启动排查](docs/boot-regression.md)。
+历史上 build-36 的根文件系统 `/lib` 链接被内核包解包破坏，缺少运行时 ELF 加载器，
+那个镜像不能作为可启动版本使用；修复过程见 [启动排查](docs/boot-regression.md)。
+现在的构建在解包内核包时就会拒绝损坏的 merged-usr 根目录，组装 ext4 之后还会再检查
+三个兼容链接和 ELF 加载器。
+
+串口登录曾经有同样的缺口：`/bin/login` 属于 Debian 的 `login` 包，而清单没有点名
+它，于是镜像里的 agetty 起来后没有程序接管终端——串口打印完内核日志就不再出现提示。
+现在 `rootfs/packages/base.list` 显式包含 `login`，rootfs 构建在 chroot 里断言
+`/bin/login`、`/etc/pam.d/login`、agetty、`serial-getty@ttyS0.service` 和已 enable
+的 `ssh.service`，CI 还会在编译内核之前先只构建 rootfs 并跑一遍
+`scripts/verify-rootfs-login.sh`。
 
 ## 默认账户与开机密码
 
@@ -32,8 +43,9 @@ Run 26 已成功生成两套镜像和内核 Debian 包，是本次增强前的�
 root 锁死，首次启动由用户创建一个普通账户，桌面就以这个账户运行。
 
 首次启动会在 HDMI 上显示中文图形设置向导（GTK3，不是文本控制台），走完
-「欢迎 → 网络 → 设备名称 → 用户 → 地区设置 → SSH → 更新 → 硬件检测 → 确认 → 收尾」
-之后才切换到真正的登录界面。密码只从输入框经 Unix socket 交给 root 后端，再由管道
+「欢迎 → 网络 → 设备名称 → 用户 → 地区 → SSH → 更新 → 硬件 → 确认 → 完成」
+之后才切换到真正的登录界面；每一页显示什么、默认值是什么，见下文的
+「首次启动设置界面」。密码只从输入框经 Unix socket 交给 root 后端，再由管道
 送给 `chpasswd`，不会出现在命令行参数、日志、临时文件或镜像文件中。
 
 账户为：
@@ -48,6 +60,12 @@ root 保持 locked：它不能从 LightDM 登录（greeter 只列可登录账户
 已关闭），也不能通过 SSH 登录（`/etc/ssh/sshd_config.d/90-jh7110.conf` 中
 `PermitRootLogin no`）。需要在串口或恢复 shell 里用 root 时，再按需
 `sudo passwd root` 解锁。桌面仍默认中文、Asia/Shanghai（UTC+8）。
+
+SSH 默认开启：镜像里 `ssh.service` 已经 enable，第一次启动用 `ssh-keygen -A`
+生成这台板子自己的 host key，之后用向导里设置的账户名和密码直接登录。串口
+（ttyS0，115200）也是登录口：内核命令行带 `console=ttyS0,115200`，systemd 据此
+生成 `serial-getty@ttyS0.service`，最后由 Debian `login` 包提供的 `/bin/login`
+接管终端。
 
 首次启动分成两半：机器自己能做的部分由 `jh7110-prepare.service` 在无终端条件下
 完成（板型 hostname 与 `/etc/hosts`、时区、locale、machine-id、SSH host key、
@@ -92,6 +110,50 @@ sudo jh7110-prepare
 
 不要在公开环境中复用简单密码；桌面账户用 sudo 提权，SSH 登录后如需 root 请用
 `sudo`，不要解锁 root 的 SSH 登录。
+
+## 首次启动设置界面
+
+第一次开机看到的不是登录界面，而是窗口标题为「JH7110 首次启动设置」的中文图形向导，
+顶部一排步骤条：欢迎 → 网络 → 设备名称 → 用户 → 地区 → SSH → 更新 → 硬件 → 确认 → 完成。
+每一页都带一句说明，写清楚这一项是做什么的、能不能跳过。
+
+| 页面 | 界面内容 | 默认值 |
+| --- | --- | --- |
+| 欢迎 | 连接 root 后端、显示板卡型号，列出接下来会做的事；连不上时给出原因和「重新连接设置服务」 | 显示板卡名与板型（例：Milk-V Mars 8GB · mars） |
+| 网络 | 无线网络列表，点一条输入密码即可连接；有线已连就直接显示「已通过有线网络连接」 | 可选，**可以跳过**，离线也能设置完 |
+| 设备名称 | 一个名称输入框，同步更新 `/etc/hosts`；只接受字母、数字和连字符 | `jh7110-mars` / `jh7110-vf2` |
+| 用户 | 用户名、密码、确认密码；折叠的「高级选项」里有显示名称和 root 说明 | 用户名 `jh7110`；密码至少 8 个字符 |
+| 地区 | 语言和区域、时区、键盘布局三个下拉框，后两个可以直接输入 | `zh_CN.UTF-8`、`Asia/Shanghai`、键盘 `us` |
+| SSH | 一个开关，附一句「root 登录始终被拒绝」 | **开启** |
+| 更新 | 只显示 `sudo apt update && sudo apt full-upgrade` 这句话，向导不会在设置过程中升级 | 永远不是阻塞项 |
+| 硬件 | 显示/GPU/内存/存储/网络/USB/音频/固件的检测结果和徽标，带「重新检测」按钮 | 结果只写本机 `/var/lib/jh7110/hardware.json` |
+| 确认 | 汇总设备名称、用户名、显示名称、语言、时区、键盘、SSH、网络；密码不在这里显示 | 按钮此时写着「开始设置」 |
+| 完成 | 依次应用上面的选择，最后写完成标记 | 失败停在那一页，可以「重试」 |
+
+默认值一览，全部来自板级参数，界面上都可以改：
+
+~~~text
+设备名称   jh7110-mars / jh7110-vf2
+用户名     jh7110（只是建议值，镜像里没有这个账户）
+密码       由用户设置，至少 8 个字符
+语言       zh_CN.UTF-8（en_US.UTF-8 同时保留）
+时区       Asia/Shanghai（UTC+08:00）
+键盘       us
+SSH        开启，root 登录始终拒绝
+~~~
+
+「地区」页可选的界面语言有十种：简体中文、繁體中文、English (United States)、
+English (United Kingdom)、日本語、한국어、Deutsch、Français、Español、Русский。
+时区和键盘布局的候选来自这台机器上实际存在的 `/usr/share/zoneinfo` 和
+`/usr/share/X11/xkb/symbols`，所以下拉框里没列出的值也输得进去。
+
+密码按**字符**而不是字节计算长度，三个汉字算三个字符；它只从输入框走到后端，
+完成后输入框立刻清空。显示名称留空时与用户名相同；首次打开这一页时它预填用户名。
+
+没有显示器、没有 GTK、只有串口时走控制台设置（whiptail 界面，提示是英文的）：
+默认账户名同样取自板级 `DEFAULT_USER`，设备名默认值取自板级 `DEFAULT_HOSTNAME`，
+它会先补跑一次机器准备（`jh7110-prepare`），再依次问账户名、两遍密码和设备名，
+最后同样写完成标记。它和图形向导共用同一份账户实现和同一份校验规则。
 
 ## 键盘和鼠标
 
@@ -150,6 +212,7 @@ Chromium 当前没有预装。Debian Trixie riscv64 没有可直接使用的官�
 - 默认时区：Asia/Shanghai
 - UTC 偏移：UTC+08:00
 - 默认 hostname：jh7110-vf2 或 jh7110-mars
+- 默认键盘布局：us（向导「地区」页可以改成任意 xkb 布局）
 
 `jh7110-prepare.service` 会初始化 machine-id、SSH host key、locale、板型 hostname，并尝试扩展 rootfs，写完后放下 `/var/lib/jh7110/prepare.done` 自动跳过自身；创建桌面账户的图形向导 `jh7110-oobe` 写 `/var/lib/jh7110/oobe.done`（该文件是最后一步写的，写入是原子的，掉电不会写出半成品）。
 

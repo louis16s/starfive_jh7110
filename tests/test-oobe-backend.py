@@ -356,13 +356,14 @@ class MethodTests(unittest.TestCase):
     def test_configure_ssh_writes_the_drop_in_and_validates_it(self):
         result = self.ok("ConfigureSSH", {"enabled": True})
         self.assertTrue(result["ssh_enabled"])
+        # What it writes is the text the image ships, line for line: a shorter
+        # configuration written here would silently take away a setting the
+        # image was built with, and root could be refused by one file and
+        # admitted by the other.  tests/test-console-and-ssh.py checks the same
+        # pair from the other side, where the file is.
         drop_in = (ROOT / "etc/ssh/sshd_config.d/90-jh7110.conf").read_text()
-        directives = [
-            line
-            for line in drop_in.splitlines()
-            if line.strip() and not line.startswith("#")
-        ]
-        self.assertEqual(directives, ["PermitRootLogin no"])
+        self.assertEqual(drop_in, self.backend_module.SSHD_DROP_IN)
+        self.assertIn("\nPermitRootLogin no\n", drop_in)
         self.assertIn("sshd -t", self.calls())
         self.assertTrue(self.state()["ssh_enabled"])
 
