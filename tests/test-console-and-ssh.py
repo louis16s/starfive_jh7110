@@ -178,8 +178,17 @@ class SshConfigurationTests(unittest.TestCase):
         # keys, and a unit that exited that way is not restarted - the board
         # would be unreachable until someone rebooted it, which is exactly the
         # "flash it and set the password up" path this image is for.
-        directives = ssh_directives(SSHD_UNIT_DROP_IN.read_text(encoding="utf-8"))
+        text = SSHD_UNIT_DROP_IN.read_text(encoding="utf-8")
+        directives = ssh_directives(text)
         self.assertEqual(directives["After"], "jh7110-prepare.service")
+        # And in the section systemd reads it in.  The drop-in cannot be handed
+        # to systemd-analyze the way a unit file can - the CI step that does
+        # that walks the unit files, and a drop-in is not one - so the same line
+        # under [Service] would be a line systemd ignores, with nothing failing
+        # anywhere and the ordering simply not there.
+        after = text.index("After=jh7110-prepare.service")
+        self.assertLess(text.index("[Unit]"), after)
+        self.assertLess(after, text.index("RuntimeDirectory=sshd"))
         # Ordered after the unit that makes the keys, and not merely waiting on
         # it: the key generation is named in the unit the ordering names, so
         # that the two statements are about the same thing.
