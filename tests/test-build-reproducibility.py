@@ -309,6 +309,25 @@ class BuildWiring(unittest.TestCase):
         text = (ROOT / 'scripts/build-rootfs.sh').read_text().replace('\\\n', ' ')
         self.assertRegex(text, r'rm -f /etc/resolv\.conf')
 
+    def test_the_wizard_check_leaves_no_bytecode_in_the_image(self):
+        # Importing the wizard module writes __pycache__/oobe.cpython-312.pyc
+        # beside it, and a .pyc header records the mtime of the source it was
+        # compiled from - a file rsync had just brought from the build host.
+        # The image build pins inode times afterwards, which is not the time
+        # the header remembers, so the file would differ between two builds of
+        # one commit and describe a moment that no longer exists.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text()
+        self.assertRegex(text, r'PYTHONDONTWRITEBYTECODE=1 jh7110-oobe --check')
+
+    def test_rootfs_build_leaves_no_ldconfig_cache_of_the_build_host(self):
+        # ldconfig writes this file to remember which directories it has
+        # already scanned, so the copy in the target describes the tree the
+        # build host unpacked into it rather than the one being assembled.  The
+        # loader reads /etc/ld.so.cache, which is written from the library list
+        # and does not differ between two builds; nothing reads this one.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text()
+        self.assertRegex(text, r'rm -f /var/cache/ldconfig/aux-cache')
+
     def test_rootfs_build_leaves_no_log_of_when_it_ran(self):
         # A log line is content, not metadata, so nothing the image build does
         # afterwards can pin it: two builds of one commit would ship different

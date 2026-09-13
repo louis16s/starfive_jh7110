@@ -402,14 +402,23 @@ that moved with both of those unchanged is a file rewritten in place - a cache
 whose bytes follow the order a tool walked the directory in - while one that
 moved with the size is a file whose content grew.
 
-Two entries have come off the list of files a build inherits from the host it
-ran on. The journal, because a build that never journals the filesystem has no
-transactions of its own to leave behind. And `/etc/resolv.conf`, which
+Several entries have come off the list of files a build inherits from the host
+it ran on. The journal, because a build that never journals the filesystem has
+no transactions of its own to leave behind. `/etc/resolv.conf`, which
 debootstrap and mmdebstrap alike copy in so that the chroot can reach its
 mirror: `scripts/build-rootfs.sh` removes it, because the address it names is
 the build host's rather than the image's, it is a different one from run to run,
 and on the board it is NetworkManager that writes this file when a connection
-comes up.
+comes up. `/var/cache/ldconfig/aux-cache` goes with the other caches: it is
+ldconfig's record of the directories it has already scanned, so the copy in the
+target describes the tree of the host that unpacked it and not the one being
+assembled, and nothing in the image reads it - the loader reads
+`/etc/ld.so.cache`, which is written from the library list and is the same
+value in both runs. And the check on the wizard runs with
+`PYTHONDONTWRITEBYTECODE=1`, so the import that is the check leaves no
+`/usr/lib/jh7110/__pycache__/*.pyc` behind: the header of a `.pyc` records the
+mtime of the source it was compiled from, which is the checkout's, and the
+passes below replace every inode time with the epoch afterwards.
 
 One artifact group stays outside that guarantee: the kernel's Debian packages.
 `scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which

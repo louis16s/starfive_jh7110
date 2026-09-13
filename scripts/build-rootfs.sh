@@ -340,7 +340,15 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         grep -q "^Exec=/usr/bin/jh7110-welcome$" /usr/share/applications/jh7110-welcome.desktop
         test -x /usr/libexec/jh7110-oobe-backend
         test -s /usr/lib/jh7110/oobe.py
-        jh7110-oobe --check
+        # Importing the wizard module writes compiled bytecode beside it, in a
+        # __pycache__ directory the tree does not otherwise have, and the header
+        # of a .pyc holds the mtime of the source it was compiled from - a file
+        # rsync had just brought from the build host, carrying the time of that
+        # checkout.  The image build pins the metadata of every inode
+        # afterwards, which is not the time the header remembers.  The import is
+        # the check; the bytecode is neither wanted nor true, so the interpreter
+        # is told not to write it.
+        PYTHONDONTWRITEBYTECODE=1 jh7110-oobe --check
         # The socket is how the wizard reaches the backend, and the unit behind
         # it is what the first connection starts; without either the window
         # runs and every page that changes something fails.
@@ -401,6 +409,14 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # writes this file on the board when a connection comes up, so there
         # the resolver arrives with the network rather than with the image.
         rm -f /etc/resolv.conf
+        # ldconfig keeps this file as a record of the directories it has
+        # already scanned, so on the build host it describes the tree of that
+        # copy of Debian rather than the one being assembled, and no package
+        # reads it: the loader reads /etc/ld.so.cache, and ldconfig rebuilds
+        # both from the library list when it next runs.  Left in, it is a file
+        # that differs between two builds of one commit with nothing behind
+        # the difference.
+        rm -f /var/cache/ldconfig/aux-cache
         apt-get clean
     '
 cleanup_qemu
