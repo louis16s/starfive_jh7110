@@ -205,6 +205,7 @@ mount "$boot_device" "$boot_mount"
 mount "$root_device" "$root_mount"
 
 python3 - "$rootfs_dir" <<'PY'  # payload-fingerprint
+import fnmatch
 import hashlib
 import os
 import stat
@@ -221,16 +222,56 @@ import sys
 # two build logs are the comparison.  Times are deliberately left out: the
 # image build pins them afterwards, so a file whose mtime is all that moved has
 # not moved.
+#
+# The same fingerprint is printed for each directory too, so a difference
+# between two runs can be read down to the branch of the tree it sits in
+# without either artifact in hand: the summary says the payload moved, these
+# say where.  /etc, /lib, /usr and /var are listed a level deeper than the
+# rest, because that is where the files no package installs and a tool
+# generates on the build host live - a cache whose bytes follow the order its
+# generator walked a directory in, or a timestamp it read from one.
 
 root = sys.argv[1].rstrip('/')
 digest = hashlib.sha256()
 counts = {'f': 0, 'd': 0, 'l': 0}
+entries = {}
+sizes = {}
+SUBTREE_DEPTH = 2
+DEEPER = {'etc': 3, 'lib': 3, 'usr': 3, 'var': 3}
+MAX_SUBTREE_LINES = 1000
+# The files a tool generates into the tree rather than a package installing
+# them, named so that their own value is in the log too: these are the ones
+# whose bytes can follow the host that ran the tool, and a directory value
+# alone would only say which of them to look at next.  The list stays short on
+# purpose - it is the generated files whose generator is known to read a
+# directory or a clock, not every file dpkg did not write.
+WATCHED = (
+    'etc/ld.so.cache',
+    'etc/ssl/certs/ca-certificates.crt',
+    'var/lib/dpkg/status',
+    'var/cache/fontconfig/*',
+    'usr/share/icons/*/icon-theme.cache',
+    'usr/share/mime/mime.cache',
+    'usr/share/glib-2.0/schemas/gschemas.compiled',
+    'lib/modules/*/modules.dep',
+    'lib/modules/*/modules.alias',
+    'lib/modules/*/modules.builtin',
+    'lib/modules/*/modules.softdep',
+    'lib/modules/*/modules.symbols',
+    'lib/modules/*/modules.devname',
+)
+
+
+def header(kind, relative, info):
+    return (f'{kind}\0{relative}\0{info.st_mode:o}\0'
+            f'{info.st_uid}:{info.st_gid}\0').encode()
 
 
 def entry(kind, relative, info, extra=b''):
-    digest.update(f'{kind}\0{relative}\0{info.st_mode:o}\0'
-                  f'{info.st_uid}:{info.st_gid}\0'.encode())
+    head = header(kind, relative, info)
+    digest.update(head)
     digest.update(extra)
+    entries[relative] = hashlib.sha256(head + extra)
 
 
 for dirpath, dirnames, filenames in os.walk(root):
@@ -250,15 +291,56 @@ for dirpath, dirnames, filenames in os.walk(root):
             entry('l', relative, info, os.readlink(path).encode())
             counts['l'] += 1
         elif stat.S_ISREG(info.st_mode):
-            entry('f', relative, info)
+            # The file is read once and fed to both hashes, so the summary is
+            # the same value it was before the per-directory lines existed.
+            head = header('f', relative, info)
+            digest.update(head)
+            own = hashlib.sha256(head)
             with open(path, 'rb') as handle:
                 for chunk in iter(lambda: handle.read(1 << 20), b''):
                     digest.update(chunk)
+                    own.update(chunk)
+            entries[relative] = own
+            sizes[relative] = info.st_size
             counts['f'] += 1
         else:
             # A device node, fifo or socket in the tree: /dev is empty
             # directories in a rootfs, and a named pipe would block the read.
             entry('o', relative, info)
+
+# A directory's value covers everything below it and nothing about itself: its
+# own record is part of its parent's value, the way the summary holds every
+# record at once.  Paths are walked sorted so the value does not depend on the
+# order os.walk found them in.
+subtrees = {}
+files_below = {}
+bytes_below = {}
+for relative in sorted(entries):
+    parts = relative.split('/')
+    for depth in range(1, len(parts)):
+        ancestor = '/'.join(parts[:depth])
+        subtrees.setdefault(ancestor, hashlib.sha256()).update(entries[relative].digest())
+for relative in sorted(sizes):
+    parts = relative.split('/')
+    for depth in range(1, len(parts)):
+        ancestor = '/'.join(parts[:depth])
+        files_below[ancestor] = files_below.get(ancestor, 0) + 1
+        bytes_below[ancestor] = bytes_below.get(ancestor, 0) + sizes[relative]
+
+listed = sorted(name for name in subtrees
+                if len(name.split('/')) <= DEEPER.get(name.split('/')[0], SUBTREE_DEPTH))
+if len(listed) > MAX_SUBTREE_LINES:
+    print(f'build-image: rootfs payload subtree: {len(listed)} directories, '
+          f'listing the first {MAX_SUBTREE_LINES}')
+    listed = listed[:MAX_SUBTREE_LINES]
+for name in listed:
+    print(f'build-image: rootfs payload subtree {name}: {files_below.get(name, 0)} files, '
+          f'{bytes_below.get(name, 0)} bytes, sha256 {subtrees[name].hexdigest()}')
+for name in sorted(relative for relative in entries
+                   if any(fnmatch.fnmatchcase(relative, pattern)
+                          for pattern in WATCHED)):
+    print(f'build-image: rootfs payload file {name}: {sizes.get(name, 0)} bytes, '
+          f'sha256 {entries[name].hexdigest()}')
 print(f'build-image: rootfs payload: {counts["f"]} files, {counts["d"]} directories, '
       f'{counts["l"]} symlinks, sha256 {digest.hexdigest()}')
 PY

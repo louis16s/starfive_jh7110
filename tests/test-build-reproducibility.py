@@ -376,13 +376,30 @@ class PayloadFingerprint(unittest.TestCase):
         result = subprocess.run([sys.executable, str(self.script), str(self.root)],
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertRegex(result.stdout,
+        lines = result.stdout.splitlines()
+        self.assertRegex(lines[-1],
                          r'^build-image: rootfs payload: \d+ files, \d+ directories, '
-                         r'\d+ symlinks, sha256 [0-9a-f]{64}\n$')
+                         r'\d+ symlinks, sha256 [0-9a-f]{64}$')
+        for line in lines[:-1]:
+            self.assertRegex(line,
+                             r'^build-image: rootfs payload (subtree \S+: \d+ files, '
+                             r'\d+ bytes|file \S+: \d+ bytes), sha256 [0-9a-f]{64}$')
         return result.stdout.strip()
 
     def digest(self):
-        return self.fingerprint().split('sha256 ')[1]
+        return self.fingerprint().splitlines()[-1].split('sha256 ')[1]
+
+    def subtrees(self):
+        """{directory: sha256} for the per-directory lines the build prints."""
+        return {line.split(' payload subtree ')[1].split(':')[0]: line.split('sha256 ')[1]
+                for line in self.fingerprint().splitlines()[:-1]
+                if ' payload subtree ' in line}
+
+    def watched(self):
+        """{file: line} for the generated files named with their own value."""
+        return {line.split(' payload file ')[1].split(':')[0]: line
+                for line in self.fingerprint().splitlines()[:-1]
+                if ' payload file ' in line}
 
     def test_a_file_that_only_moved_in_time_has_not_moved(self):
         # The image build pins the mtimes of everything it writes afterwards,
@@ -416,6 +433,50 @@ class PayloadFingerprint(unittest.TestCase):
         (self.root / 'usr/bin').mkdir(parents=True)
         output = self.fingerprint()
         self.assertIn('1 files, 3 directories, 0 symlinks,', output)
+
+    def test_a_change_is_localized_to_the_branch_that_holds_it(self):
+        # The summary says the payload moved; these lines say which branch, so
+        # that the run that has the difference also says where it is.  A cache
+        # generated on the build host is the kind of file that moves, and it
+        # sits deep enough that only a directory value can point at it.
+        self.write('etc/hostname', 'jh7110\n')
+        self.write('usr/share/icons/Adwaita/icon-theme.cache', b'cache')
+        before = self.subtrees()
+        self.write('usr/share/icons/Adwaita/icon-theme.cache', b'cachf')
+        after = self.subtrees()
+        self.assertEqual(after['etc'], before['etc'])
+        for name in ('usr', 'usr/share', 'usr/share/icons'):
+            self.assertNotEqual(after[name], before[name])
+
+    def test_a_subtree_line_counts_what_is_below_it(self):
+        # Files and bytes next to the digest, because a value that moved with
+        # both of those unchanged is a file rewritten in place - an ordering -
+        # while one that moved with the size is a file whose content grew.
+        self.write('usr/share/doc/a/changelog.Debian.gz', b'12345678')
+        self.write('usr/share/doc/b/changelog.Debian.gz', b'1234')
+        lines = [line for line in self.fingerprint().splitlines()
+                 if line.startswith('build-image: rootfs payload subtree usr/share/doc:')]
+        self.assertEqual(len(lines), 1)
+        self.assertIn('2 files, 12 bytes,', lines[0])
+
+    def test_a_generated_cache_is_named_with_its_own_value(self):
+        # A directory value says which branch moved; this says whether the file
+        # in it that a tool generates is the one that moved.  Matching is by
+        # path, so a file the list does not name gets no line of its own.
+        self.write('var/cache/fontconfig/abcd-le64.cache-7', b'cache')
+        self.write('usr/share/icons/Adwaita/icon-theme.cache', b'fast')
+        self.write('etc/hostname', 'jh7110\n')
+        before = self.watched()
+        self.assertEqual(sorted(before), ['usr/share/icons/Adwaita/icon-theme.cache',
+                                          'var/cache/fontconfig/abcd-le64.cache-7'])
+        self.assertIn(': 4 bytes,', before['usr/share/icons/Adwaita/icon-theme.cache'])
+        self.assertIn(': 5 bytes,', before['var/cache/fontconfig/abcd-le64.cache-7'])
+        self.write('var/cache/fontconfig/abcd-le64.cache-7', b'cachf')
+        after = self.watched()
+        self.assertEqual(after['usr/share/icons/Adwaita/icon-theme.cache'],
+                         before['usr/share/icons/Adwaita/icon-theme.cache'])
+        self.assertNotEqual(after['var/cache/fontconfig/abcd-le64.cache-7'],
+                            before['var/cache/fontconfig/abcd-le64.cache-7'])
 
 
 class ImageIdentifiers(unittest.TestCase):

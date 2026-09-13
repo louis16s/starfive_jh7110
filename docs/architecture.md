@@ -389,11 +389,18 @@ after them it would propagate unverified.
 
 What the two identical CI runs of one commit are for is the part that cannot be
 reproduced on a development host: the order a real kernel allocates inodes and
-directory entries at scale. That order is in the image, no pass below replaces
-it, and it is the reason the digest of the assembled image is not what two
-builds are compared on - the free-cluster summaries of the boot partition and
-every value pinned above are, and so are the initrd digest and the payload
-fingerprint the build prints into its log.
+directory entries at scale, and the files some tool generated on that host while
+the rootfs was assembled. That order is in the image, no pass below replaces it,
+and it is the reason the digest of the assembled image is not what two builds
+are compared on - the free-cluster summaries of the boot partition and every
+value pinned above are, and so are the initrd digest and the payload fingerprint
+the build prints into its log. That fingerprint is printed for each directory of
+the tree as well, so a run whose payload value disagrees with another run's says
+in the same log which branch of the tree to look in. The per-directory lines
+carry the files and the bytes below them next to the digest, because a value
+that moved with both of those unchanged is a file rewritten in place - a cache
+whose bytes follow the order a tool walked the directory in - while one that
+moved with the size is a file whose content grew.
 
 Two entries have come off the list of files a build inherits from the host it
 ran on. The journal, because a build that never journals the filesystem has no
@@ -414,8 +421,10 @@ digests across runs is therefore not a reproducibility check - and the same
 goes for the image file, whose bytes hold the kernel's allocation decisions
 rather than only what was copied into it. What a rebuild is checked against is
 what the build prints: the initrd's size and digest where it is generated, the
-payload fingerprint before the tree is copied in, and the U-Boot payload, which
-the epoch and the FIT rewrite above make a function of the commit alone.
+payload fingerprint before the tree is copied in - with its per-directory values,
+which name the branch to look in when two runs disagree - and the U-Boot
+payload, which the epoch and the FIT rewrite above make a function of the commit
+alone.
 Closing the packaging gap needs a fixed clock around `make bindeb-pkg` (a
 `date` shim, or libfaketime) and two identical CI runs to prove it, which is why
 it is recorded here rather than assumed.
