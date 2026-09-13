@@ -389,12 +389,16 @@ after them it would propagate unverified.
 
 What the two identical CI runs of one commit are for is the part that cannot be
 reproduced on a development host: the order a real kernel allocates inodes and
-directory entries at scale, and the handful of files a rootfs build inherits
-from the host it ran on - `/etc/resolv.conf` among them, which debootstrap and
-mmdebstrap alike copy in so that the chroot can reach its mirror, and which the
-board's NetworkManager overwrites at first boot. The journal used to be on that
-list; it is not any more, because a build that never journals the filesystem has
-no transactions of its own to leave behind.
+directory entries at scale.
+
+Two entries have come off the list of files a build inherits from the host it
+ran on. The journal, because a build that never journals the filesystem has no
+transactions of its own to leave behind. And `/etc/resolv.conf`, which
+debootstrap and mmdebstrap alike copy in so that the chroot can reach its
+mirror: `scripts/build-rootfs.sh` removes it, because the address it names is
+the build host's rather than the image's, it is a different one from run to run,
+and on the board it is NetworkManager that writes this file when a connection
+comes up.
 
 One artifact group stays outside that guarantee: the kernel's Debian packages.
 `scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which

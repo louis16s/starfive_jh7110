@@ -294,6 +294,15 @@ class BuildWiring(unittest.TestCase):
         self.assertLess(text.index('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"'),
                         text.index('/usr/sbin/mkinitramfs'))
 
+    def test_rootfs_build_ships_no_resolver_of_the_machine_that_built_it(self):
+        # mmdebstrap --mode=root copies the host copy of /etc/resolv.conf into
+        # the target so that the chroot can reach its mirror, and what it names
+        # is the build host's resolver: a different address between two runs,
+        # and one that answers nowhere the board is used.  NetworkManager
+        # writes this file on the board, so the image does not have to.
+        text = (ROOT / 'scripts/build-rootfs.sh').read_text().replace('\\\n', ' ')
+        self.assertRegex(text, r'rm -f /etc/resolv\.conf')
+
     def test_rootfs_build_leaves_no_log_of_when_it_ran(self):
         # A log line is content, not metadata, so nothing the image build does
         # afterwards can pin it: two builds of one commit would ship different

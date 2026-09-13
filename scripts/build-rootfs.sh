@@ -393,6 +393,14 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         rm -f /var/log/apt/*
         rm -f /etc/machine-id
         rm -f /etc/ssh/ssh_host_*
+        # mmdebstrap --mode=root copies the host copy of this file into the
+        # target so that the chroot can reach its mirror, and left there it is
+        # two things the image should not ship: a file that differs between two
+        # builds of one commit, and the resolver address of the machine that
+        # built it, which answers nowhere the board is used.  NetworkManager
+        # writes this file on the board when a connection comes up, so there
+        # the resolver arrives with the network rather than with the image.
+        rm -f /etc/resolv.conf
         apt-get clean
     '
 cleanup_qemu
