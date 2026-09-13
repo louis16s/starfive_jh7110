@@ -9,13 +9,24 @@ die() {
     exit 1
 }
 
+# shellcheck source=lib/build-timestamps.sh
+source "$REPO_ROOT/scripts/lib/build-timestamps.sh"
+
 [[ $# -eq 1 ]] || die "usage: $0 BOARD"
 board=$1
 
 # shellcheck source=/dev/null
 source "$REPO_ROOT/board/$board/profile.conf"
 
-for command_name in dpkg-deb depmod chroot lsinitramfs; do
+# mkinitramfs is the one tool in this script that writes the wall clock into
+# what it produces unless it is told not to.  With SOURCE_DATE_EPOCH set it
+# touches every file newer than the epoch to that second and passes cpio
+# --reproducible, which drops the inode and device numbers the archive would
+# otherwise carry; without it, it does neither, and the initrd it writes is a
+# function of when the build ran - a file the boot partition holds twice.
+pin_build_timestamps
+
+for command_name in dpkg-deb depmod chroot lsinitramfs sha256sum stat; do
     command -v "$command_name" >/dev/null 2>&1 || die "missing command: $command_name"
 done
 
@@ -93,9 +104,13 @@ chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /bin/true
 [[ -L "$rootfs_dir/sbin/init" ]] || die "systemd init link is missing"
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L / /usr/lib/systemd/systemd --version
 printf 'install-kernel: generating initrd for %s\n' "$kernel_release"
+# env -i drops everything that is not named here, the epoch included, which is
+# why the variable is passed explicitly: the man page's "attempts to generate a
+# reproducible initramfs image" is the setting, not the default.
 chroot "$rootfs_dir" /usr/bin/qemu-riscv64-static -L /usr /usr/bin/env -i \
     HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
     LC_ALL=C DEBIAN_FRONTEND=noninteractive QEMU_LD_PREFIX=/usr \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
     /usr/sbin/mkinitramfs -o "/boot/initrd.img-$kernel_release" "$kernel_release"
 [[ -s "$rootfs_dir/boot/initrd.img-$kernel_release" ]] \
     || die "mkinitramfs did not create a usable initrd"
@@ -106,4 +121,13 @@ for firmware in rgx.fw.36.50.54.182 rgx.sh.36.50.54.182; do
         die "initrd is missing required PVR firmware: $firmware"
     fi
 done
+# The initrd is the one file in the image that no script of ours writes, and
+# the boot partition carries it twice.  Its size and digest are printed so that
+# two build logs can be compared without the artifact around them: if they
+# agree here, the tool that used to stamp the build clock into this file has
+# stopped doing that.
+initrd="$rootfs_dir/boot/initrd.img-$kernel_release"
+printf 'install-kernel: initrd %s is %s bytes, sha256 %s\n' \
+    "$kernel_release" "$(stat -c %s "$initrd")" \
+    "$(sha256sum "$initrd" | cut -d' ' -f1)"
 printf 'kernel installed into rootfs: %s (%s)\n' "$board" "$kernel_release"

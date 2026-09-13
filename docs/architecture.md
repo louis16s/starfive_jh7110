@@ -278,6 +278,17 @@ data follows the device tree, so repacking the blob the way `fdtput` does would
 move that data and invalidate every data-offset in the file — and it refuses to
 write unless exactly those four bytes change.
 
+The initrd is the one payload that comes from a tool of the distribution's
+rather than from the kernel's own build: `mkinitramfs` normalises the mtimes it
+packs - and passes `cpio` the `--reproducible` flag that drops the archive's
+inode and device numbers - only when `SOURCE_DATE_EPOCH` is in its own
+environment, so `scripts/install-kernel-into-rootfs.sh` names the variable in
+the `env -i` line that starts it. The epoch that script pins in its own
+environment does not cross that boundary by itself, and an initrd built without
+it is a function of the clock of the run - in the file the boot partition holds
+twice. Its size and digest are printed where it is generated, because the
+artifact digest cannot stand in for them.
+
 The packages need the same value for a different reason: `dpkg-deb` stamps its
 `ar` members with the packaging time, and a staged file newer than
 `SOURCE_DATE_EPOCH` is archived with that time as well, so

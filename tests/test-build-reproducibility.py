@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds of one commit must produce identical bytes.
+"""Every build has to be a function of the commit, not of when or where it ran.
 
 Two boards built from the same commit used to differ in the U-Boot version
 string, in the kernel's built-in initramfs mtimes and in the FIT's /timestamp
@@ -237,9 +237,11 @@ class BuildWiring(unittest.TestCase):
 
     def test_build_scripts_pin_their_timestamps(self):
         # The GPU package too: it is assembled entirely from files whose mtimes
-        # are either the vendor's or the packaging run's.
+        # are either the vendor's or the packaging run's.  The kernel
+        # installation as well, because mkinitramfs writes the initrd.
         for script in ('scripts/build-uboot.sh', 'scripts/build-kernel.sh',
-                       'scripts/build-gpu-package.sh'):
+                       'scripts/build-gpu-package.sh',
+                       'scripts/install-kernel-into-rootfs.sh'):
             with self.subTest(script=script):
                 text = (ROOT / script).read_text()
                 self.assertIn('source "$REPO_ROOT/scripts/lib/build-timestamps.sh"', text)
@@ -276,6 +278,21 @@ class BuildWiring(unittest.TestCase):
         self.assertIn('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"', text)
         self.assertLess(text.index('\npin_build_timestamps\n'),
                         text.index('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"'))
+
+    def test_the_initrd_is_generated_with_the_epoch_in_its_environment(self):
+        # mkinitramfs writes the mtime it finds on every file it packs into the
+        # initrd, and it passes cpio --reproducible - which drops the inode and
+        # device numbers the archive would otherwise carry - only when
+        # SOURCE_DATE_EPOCH is set.  It runs behind env -i, which drops
+        # everything the command line does not name, so the variable has to be
+        # named there: pinning it in the script's own environment reaches the
+        # chroot not at all.
+        text = (ROOT / 'scripts/install-kernel-into-rootfs.sh').read_text()
+        self.assertIn('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"', text)
+        self.assertLess(text.index('\npin_build_timestamps\n'),
+                        text.index('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"'))
+        self.assertLess(text.index('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"'),
+                        text.index('/usr/sbin/mkinitramfs'))
 
     def test_rootfs_build_leaves_no_log_of_when_it_ran(self):
         # A log line is content, not metadata, so nothing the image build does
