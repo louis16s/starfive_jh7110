@@ -304,10 +304,26 @@ class WorkflowTests(unittest.TestCase):
         # that the build waits for.
         smoke = self.jobs["rootfs-smoke"]
         commands = "\n".join(str(step.get("run", "")) for step in smoke["steps"])
+        # A rootfs installs the GPU package, so a job that builds one without
+        # building that first fails - which is how this job failed its first
+        # time, fifteen minutes into mmdebstrap.
+        self.assertIn("gpu-package", commands)
         self.assertIn("rootfs", commands)
         self.assertIn("verify-rootfs-login.sh", commands)
         needs = self.jobs["build"]["needs"]
         self.assertIn("rootfs-smoke", needs)
+
+    def test_the_rootfs_build_checks_its_inputs_before_the_long_run(self):
+        # mmdebstrap spends a quarter of an hour downloading and unpacking the
+        # base system, and the GPU package it needs is not checked until after
+        # that - so the check is also made before it, where a tree that has
+        # never been through `make gpu-package` fails in seconds.
+        script = read("scripts/build-rootfs.sh")
+        self.assertLess(
+            script.index("expected exactly one GPU package"),
+            script.index("if mmdebstrap \\"),
+            "the GPU package is only checked after mmdebstrap has run",
+        )
 
     def test_the_existing_workflows_and_jobs_survive(self):
         for name, job in (

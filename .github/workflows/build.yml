@@ -159,6 +159,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # The PVR payload is what the GPU package is built from, and the rootfs
+      # installs that package; restoring it here is what keeps this job from
+      # downloading it again for every run.  Nothing else the build needs is
+      # fetched: the kernel, U-Boot and OpenSBI sources are not inputs to a
+      # rootfs.
+      - name: Restore locked PVR payload cache
+        id: pvr-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: sources/gpu
+          key: ubuntu-24.04-${{ matrix.board }}-pvr-${{ hashFiles('sources.lock') }}
+
       - name: Install host dependencies
         run: |
           sudo apt-get update
@@ -166,6 +178,16 @@ jobs:
             binfmt-support debian-archive-keyring mmdebstrap mount \
             qemu-user-static rsync util-linux xz-utils
           sudo update-binfmts --enable
+
+      - name: Build PVR GPU package
+        run: make BOARD=${{ matrix.board }} BUILD_TYPE=${{ inputs.build_type || 'release' }} gpu-package
+
+      - name: Save locked PVR payload cache
+        if: ${{ !cancelled() && steps.pvr-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: sources/gpu
+          key: ${{ steps.pvr-cache.outputs.cache-primary-key }}
 
       - name: Build Debian Trixie rootfs
         run: sudo make BOARD=${{ matrix.board }} BUILD_TYPE=${{ inputs.build_type || 'release' }} rootfs

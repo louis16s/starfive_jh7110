@@ -51,6 +51,17 @@ readonly mmdebstrap_mode=root
 [[ ! -e "$rootfs_dir" ]] || die "output exists: $rootfs_dir; remove it explicitly before rebuilding"
 mkdir -p "$output_dir"
 
+# The GPU package is an input like the manifest is, and it is checked here
+# rather than only where it is installed: mmdebstrap spends a quarter of an
+# hour downloading and unpacking the base system before that point, and a
+# missing package - the ordinary state of a tree where `make gpu-package` has
+# not been run - would otherwise be discovered at the end of it.
+shopt -s nullglob
+early_gpu_packages=("$board_package_dir"/jh7110-pvr-rogue_*.deb)
+shopt -u nullglob
+[[ ${#early_gpu_packages[@]} -eq 1 ]] \
+    || die "expected exactly one GPU package in $board_package_dir; run make BOARD=$board gpu-package"
+
 mapfile -t packages < <(
     awk '
         /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
