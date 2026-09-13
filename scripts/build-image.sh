@@ -204,6 +204,64 @@ mount "$boot_device" "$boot_mount"
 # is mounted.
 mount "$root_device" "$root_mount"
 
+python3 - "$rootfs_dir" <<'PY'  # payload-fingerprint
+import hashlib
+import os
+import stat
+import sys
+
+# Two builds of one commit are supposed to put the same bytes into this image,
+# and the artifact they are published as cannot say whether they did: the
+# kernel chooses inode numbers and directory-entry order while the rootfs is
+# copied in, both are part of the ext4, and no pass below owns either.  What
+# can be compared is what goes in.  This is its fingerprint - the path, the
+# type, the mode, the owner and the content of every entry below the rootfs
+# tree except /boot, which the kernel and the initrd are installed into the
+# boot partition instead - and it is printed rather than written down because
+# two build logs are the comparison.  Times are deliberately left out: the
+# image build pins them afterwards, so a file whose mtime is all that moved has
+# not moved.
+
+root = sys.argv[1].rstrip('/')
+digest = hashlib.sha256()
+counts = {'f': 0, 'd': 0, 'l': 0}
+
+
+def entry(kind, relative, info, extra=b''):
+    digest.update(f'{kind}\0{relative}\0{info.st_mode:o}\0'
+                  f'{info.st_uid}:{info.st_gid}\0'.encode())
+    digest.update(extra)
+
+
+for dirpath, dirnames, filenames in os.walk(root):
+    dirnames.sort()
+    if dirpath == root:
+        dirnames[:] = [name for name in dirnames if name != 'boot']
+    for name in dirnames + sorted(filenames):
+        path = os.path.join(dirpath, name)
+        relative = os.path.relpath(path, root)
+        info = os.lstat(path)
+        if stat.S_ISDIR(info.st_mode):
+            entry('d', relative, info)
+            counts['d'] += 1
+        elif stat.S_ISLNK(info.st_mode):
+            # os.walk sorts a symlink by what it resolves to and descends into
+            # none of them, so the link itself is only ever read here.
+            entry('l', relative, info, os.readlink(path).encode())
+            counts['l'] += 1
+        elif stat.S_ISREG(info.st_mode):
+            entry('f', relative, info)
+            with open(path, 'rb') as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b''):
+                    digest.update(chunk)
+            counts['f'] += 1
+        else:
+            # A device node, fifo or socket in the tree: /dev is empty
+            # directories in a rootfs, and a named pipe would block the read.
+            entry('o', relative, info)
+print(f'build-image: rootfs payload: {counts["f"]} files, {counts["d"]} directories, '
+      f'{counts["l"]} symlinks, sha256 {digest.hexdigest()}')
+PY
 rsync -a --exclude=/boot --exclude=/boot/ "$rootfs_dir/" "$root_mount/"
 for alias in bin sbin lib; do
     [[ -L "$root_mount/$alias" && $(readlink "$root_mount/$alias") == "usr/$alias" ]] \

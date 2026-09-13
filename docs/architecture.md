@@ -389,7 +389,11 @@ after them it would propagate unverified.
 
 What the two identical CI runs of one commit are for is the part that cannot be
 reproduced on a development host: the order a real kernel allocates inodes and
-directory entries at scale.
+directory entries at scale. That order is in the image, no pass below replaces
+it, and it is the reason the digest of the assembled image is not what two
+builds are compared on - the free-cluster summaries of the boot partition and
+every value pinned above are, and so are the initrd digest and the payload
+fingerprint the build prints into its log.
 
 Two entries have come off the list of files a build inherits from the host it
 ran on. The journal, because a build that never journals the filesystem has no
@@ -406,10 +410,15 @@ ignores `SOURCE_DATE_EPOCH` and takes the packaging time, so the `.deb` files -
 and the `.changes`/`.buildinfo` published beside them - are not byte-identical
 between two builds even though the payload inside them is pinned by the same
 epoch. Comparing their
-digests across runs is therefore not a reproducibility check; comparing the
-U-Boot and image artifacts is. Closing this needs a fixed clock around
-`make bindeb-pkg` (a `date` shim, or libfaketime) and two identical CI runs to
-prove it, which is why it is recorded here rather than assumed.
+digests across runs is therefore not a reproducibility check - and the same
+goes for the image file, whose bytes hold the kernel's allocation decisions
+rather than only what was copied into it. What a rebuild is checked against is
+what the build prints: the initrd's size and digest where it is generated, the
+payload fingerprint before the tree is copied in, and the U-Boot payload, which
+the epoch and the FIT rewrite above make a function of the commit alone.
+Closing the packaging gap needs a fixed clock around `make bindeb-pkg` (a
+`date` shim, or libfaketime) and two identical CI runs to prove it, which is why
+it is recorded here rather than assumed.
 
 `workflow_dispatch` accepts `board=all|visionfive2|mars` and `build_type=release|debug`. A `preflight` job rejects anything else before the matrix starts: `workflow_call` passes a free-form board, and an unknown value used to fall through the matrix expression to "build both boards" while every guarded step evaluated false, so the job reported success having built nothing. A release job must build each requested board in a clean output directory. A failure in one board must not publish the other board under the wrong filename.
 

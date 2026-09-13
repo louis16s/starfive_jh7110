@@ -8,6 +8,12 @@ hostname into every released kernel banner.  These tests pin the wiring that
 fixes it and execute the FIT patch itself against a synthetic blob, because
 that patch is a raw byte write into a boot payload: an off-by-one there is a
 board that does not come up.
+
+What they cannot reach is what the kernel decides while the image is assembled:
+the inode numbers and directory-entry order it chooses for the ext4 are part of
+the assembled image, which is why two runs of one commit have different
+artifact digests and why the build prints what it does ship - see the payload
+fingerprint below and "CI and reproducibility" in docs/architecture.md.
 """
 import datetime
 import os
@@ -340,6 +346,78 @@ class BuildWiring(unittest.TestCase):
                         text.index('dpkg-deb --build'))
 
 
+class PayloadFingerprint(unittest.TestCase):
+    """The one line two build logs can be compared on.
+
+    The artifact digest cannot be that line: the ext4 underneath it carries
+    inode numbers and directory-entry order that the kernel chose while the
+    rootfs was copied in, so it moves between two builds of one commit for
+    reasons that have nothing to do with what they ship.  The build therefore
+    prints a fingerprint of what went in, and these tests run it the way the
+    build does - from the heredoc that ships, over a tree built here.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / 'rootfs'
+        self.root.mkdir()
+        self.script = Path(self.temp.name) / 'payload-fingerprint.py'
+        self.script.write_text(
+            heredoc_body('scripts/build-image.sh', 'payload-fingerprint'))
+
+    def write(self, relative, content):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content if isinstance(content, bytes) else content.encode())
+        return path
+
+    def fingerprint(self):
+        result = subprocess.run([sys.executable, str(self.script), str(self.root)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout,
+                         r'^build-image: rootfs payload: \d+ files, \d+ directories, '
+                         r'\d+ symlinks, sha256 [0-9a-f]{64}\n$')
+        return result.stdout.strip()
+
+    def digest(self):
+        return self.fingerprint().split('sha256 ')[1]
+
+    def test_a_file_that_only_moved_in_time_has_not_moved(self):
+        # The image build pins the mtimes of everything it writes afterwards,
+        # so a tree that differs in nothing else is the same payload.
+        path = self.write('etc/hostname', 'jh7110\n')
+        before = self.digest()
+        os.utime(path, (1700000000, 1700000000))
+        self.assertEqual(self.digest(), before)
+
+    def test_content_and_symlink_targets_are_what_it_covers(self):
+        self.write('etc/hostname', 'jh7110\n')
+        (self.root / 'usr/bin/jh7110-prepare').parent.mkdir(parents=True)
+        (self.root / 'usr/bin/jh7110-prepare').symlink_to('../libexec/jh7110-prepare')
+        before = self.digest()
+        self.write('etc/hostname', 'jh7111\n')
+        after = self.digest()
+        self.assertNotEqual(after, before)
+        self.write('etc/hostname', 'jh7110\n')
+        self.assertEqual(self.digest(), before)
+        (self.root / 'usr/bin/jh7110-prepare').unlink()
+        (self.root / 'usr/bin/jh7110-prepare').symlink_to('../libexec/jh7110-setup')
+        self.assertNotEqual(self.digest(), before)
+
+    def test_the_boot_directory_is_left_out_of_both_the_copy_and_the_count(self):
+        # rsync is told to skip /boot, and the kernel and the initrd are
+        # installed into the boot partition instead, so a file there is not
+        # part of what this measures - the initrd it deliberately holds is the
+        # one file the build cannot make deterministic from the tree alone.
+        self.write('etc/hostname', 'jh7110\n')
+        self.write('boot/initrd.img', 'not copied into the image\n')
+        (self.root / 'usr/bin').mkdir(parents=True)
+        output = self.fingerprint()
+        self.assertIn('1 files, 3 directories, 0 symlinks,', output)
+
+
 class ImageIdentifiers(unittest.TestCase):
     """The identifiers every build of a board has to derive to the same value.
 
@@ -411,7 +489,8 @@ class ImageNormalisation(unittest.TestCase):
         # a syntax error there is a build that dies after it has already
         # partitioned a loop device.
         for marker in ('image-identifiers', 'esp-times', 'inode-times',
-                       'superblock-times', 'inode-times-check'):
+                       'superblock-times', 'inode-times-check',
+                       'payload-fingerprint'):
             with self.subTest(marker=marker):
                 compile(self.pass_body(marker), marker, 'exec')
 
