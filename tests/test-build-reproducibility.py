@@ -366,6 +366,17 @@ class BuildWiring(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertRegex(host_check, rf'\b{re.escape(command)}\b')
 
+    def test_kernel_packaging_runs_under_the_pinned_date(self):
+        # mkdebian's `date -R` is the one call that puts the packaging clock
+        # into the kernel's packages, and the changelog it writes ships inside
+        # the image; the shim goes on PATH for that call alone - the build
+        # around it asks the clock what time it is and has to hear the truth.
+        text = (ROOT / 'scripts/build-kernel.sh').read_text()
+        self.assertIn('install -m 0755 "$REPO_ROOT/scripts/lib/pinned-date.sh" '
+                      '"$date_shim/date"', text)
+        self.assertLess(text.index('PATH="$date_shim:$PATH"'),
+                        text.index('bindeb-pkg'))
+
     def test_gpu_package_pins_before_it_archives(self):
         # The helper only exports the environment, so it has to run before
         # dpkg-deb reads it; behind the --build call the package would quietly
@@ -373,6 +384,71 @@ class BuildWiring(unittest.TestCase):
         text = (ROOT / 'scripts/build-gpu-package.sh').read_text()
         self.assertLess(text.index('\npin_build_timestamps\n'),
                         text.index('dpkg-deb --build'))
+
+
+class PinnedDate(unittest.TestCase):
+    """The `date` the kernel packaging step runs under.
+
+    mkdebian stamps debian/changelog with `date -R`, which takes the packaging
+    clock and ignores the epoch - and the changelog ships in the image,
+    compressed, as /usr/share/doc/linux-image-*/changelog.Debian.gz, which is
+    where two builds of one commit left a one-byte difference in
+    /usr/share/doc.  The shim is run here the way the build runs it, as a
+    program found under the name `date` in front of everything else on PATH,
+    because the thing it exists to stop is an almost-right answer.
+    """
+
+    SHIM = ROOT / 'scripts/lib/pinned-date.sh'
+    EPOCH = '1700000000'
+    # Frozen rather than derived from the epoch: a test that formats it the way
+    # the shim does would agree with any mistake the shim made.
+    EXPECTED = 'Tue, 14 Nov 2023 22:13:20 +0000'
+
+    def run_shim(self, *arguments, epoch=EPOCH, zone='UTC'):
+        environment = dict(os.environ)
+        environment['TZ'] = zone
+        if epoch is None:
+            environment.pop('SOURCE_DATE_EPOCH', None)
+        else:
+            environment['SOURCE_DATE_EPOCH'] = epoch
+        return subprocess.run([str(self.SHIM), *arguments], text=True,
+                              capture_output=True, env=environment)
+
+    def test_the_changelog_date_is_the_epoch_in_utc(self):
+        # -R prints the local time in the machine's own zone, so the same build
+        # would package a different changelog on a runner set to anything but
+        # UTC; the answer here does not depend on where it runs.
+        for zone in ('UTC', 'Asia/Shanghai', 'America/New_York'):
+            with self.subTest(zone=zone):
+                result = self.run_shim('-R', zone=zone)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), self.EXPECTED)
+
+    def test_the_long_spellings_of_the_same_form_agree(self):
+        for argument in ('--rfc-2822', '--rfc-email'):
+            with self.subTest(argument=argument):
+                result = self.run_shim(argument)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), self.EXPECTED)
+
+    def test_every_other_call_is_the_system_clock(self):
+        # A build that asks what time it is gets the time it is: the shim is
+        # only in the way of the one form mkdebian asks for.
+        result = self.run_shim('+%Y')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout.strip(), r'^\d{4}$')
+        self.assertNotEqual(result.stdout.strip(), self.EXPECTED[12:16])
+
+    def test_an_unset_epoch_leaves_the_answer_to_the_system(self):
+        # Without an epoch there is nothing to pin to, and a date that failed
+        # or printed an empty line would take the changelog line with it.
+        for epoch in (None, ''):
+            with self.subTest(epoch=epoch):
+                result = self.run_shim('-R', epoch=epoch)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertRegex(result.stdout.strip(),
+                                 r'^\w{3}, \d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} ')
+                self.assertNotEqual(result.stdout.strip(), self.EXPECTED)
 
 
 class PayloadFingerprint(unittest.TestCase):

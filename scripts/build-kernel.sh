@@ -124,9 +124,21 @@ patch_8g_memory_dtb
 package_dir="$REPO_ROOT/$OUTPUT_ROOT/$board/packages"
 package_output_root="$REPO_ROOT/$OUTPUT_ROOT/$board"
 mkdir -p "$package_dir"
-kernel_make KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
+# mkdebian stamps debian/changelog with `date -R`, which ignores the epoch and
+# takes the packaging clock, so the same kernel packaged twice carries two
+# different changelogs - and that line reaches the image, because the changelog
+# ships in it compressed as /usr/share/doc/linux-image-*/changelog.Debian.gz.
+# That is where the last pair of runs left the one-byte difference in
+# /usr/share/doc.  The shim answers that one form from the epoch and every other
+# call from the system clock; see the file for what it does and does not cover.
+date_shim="$package_dir/date-shim"
+install -d -m 0755 "$date_shim"
+install -m 0755 "$REPO_ROOT/scripts/lib/pinned-date.sh" "$date_shim/date"
+PATH="$date_shim:$PATH" \
+    kernel_make KBUILD_DEBARCH=riscv64 KDEB_PKGVERSION="$KERNEL_PACKAGE_VERSION" \
     DPKG_FLAGS=-d \
     -j"$jobs" bindeb-pkg
+rm -rf "$date_shim"
 # Packaging may invoke dtbs again; restore the board-specific desktop DTB
 # consumed by the image assembler and validate the final output.
 build_desktop_dtb

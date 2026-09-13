@@ -434,15 +434,19 @@ a different one between two builds of one commit. `scripts/build-rootfs.sh`
 removes both, and `jh7110-prepare` generates each on the board with the
 package's own check - only when the file is missing or empty.
 
-One artifact group stays outside that guarantee: the kernel's Debian packages.
-`scripts/package/mkdebian` stamps `debian/changelog` with `date -R`, which
-ignores `SOURCE_DATE_EPOCH` and takes the packaging time, so the `.deb` files -
-and the `.changes`/`.buildinfo` published beside them - are not byte-identical
-between two builds even though the payload inside them is pinned by the same
-epoch. Comparing their
-digests across runs is therefore not a reproducibility check - and the same
-goes for the image file, whose bytes hold the kernel's allocation decisions
-rather than only what was copied into it. What a rebuild is checked against is
+The kernel's Debian packages were the one artifact group outside that
+guarantee, and the source of that is now closed: `scripts/package/mkdebian`
+stamps `debian/changelog` with `date -R`, which ignores `SOURCE_DATE_EPOCH` and
+takes the packaging clock, so one commit packaged twice carried two changelogs -
+and that line is inside the image, because the changelog ships in it as
+`/usr/share/doc/linux-image-*/changelog.Debian.gz`. That one call now runs with
+`scripts/lib/pinned-date.sh` first on PATH, which answers this form from the
+epoch and every other form from the system clock. Whether the `.deb` files, and
+the `.changes`/`.buildinfo` beside them, are byte-identical between two builds is
+what the build prints - a digest for each package - and not what this document
+claims. The image file is still not a thing to compare: its bytes hold the
+kernel's inode and directory-entry allocation decisions rather than only what was
+copied into it. What a rebuild is checked against is
 what the build prints: the initrd's size and digest where it is generated, the
 payload fingerprint before the tree is copied in - with its per-directory values,
 which name the branch to look in when two runs disagree - and the U-Boot
