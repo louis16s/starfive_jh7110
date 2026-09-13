@@ -68,14 +68,23 @@ fi
 require usr/lib/systemd/system/serial-getty@.service
 
 # ssh: the server, the unit that starts it, the drop-in that states its
-# configuration, the unit drop-in that gives it /run/sshd, and the enablement
-# that makes it come up at boot.  The enable symlink is what a board with no
-# serial cable depends on, and without it the board is silent until someone
-# finds a cable.
+# configuration, the unit drop-in that gives it /run/sshd and orders it after
+# the first boot, and the enablement that makes it come up at boot.  The enable
+# symlink is what a board with no serial cable depends on, and without it the
+# board is silent until someone finds a cable.
 require usr/sbin/sshd executable
 require usr/lib/systemd/system/ssh.service
-require etc/systemd/system/ssh.service.d/10-jh7110-runtime-dir.conf
+require etc/systemd/system/ssh.service.d/10-jh7110.conf
 require etc/systemd/system/multi-user.target.wants/ssh.service
+# The image ships no host keys and sshd will not start without them, so the
+# daemon has to be ordered after the first-boot unit that makes them: both are
+# wanted by multi-user.target, and started together the daemon can reach its own
+# start-up check first and exit, after which nothing restarts it.
+unit_drop_in="$rootfs/etc/systemd/system/ssh.service.d/10-jh7110.conf"
+if [[ -e "$unit_drop_in" ]] && ! grep -qx 'After=jh7110-prepare.service' "$unit_drop_in"; then
+    echo "verify-rootfs-login: ssh.service is not ordered after jh7110-prepare.service" >&2
+    failures=$((failures + 1))
+fi
 drop_in="$rootfs/etc/ssh/sshd_config.d/90-jh7110.conf"
 require etc/ssh/sshd_config.d/90-jh7110.conf
 if [[ -e "$drop_in" ]]; then

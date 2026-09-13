@@ -316,6 +316,11 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # here - QEMU user-mode is not a booted system, which is why this is a
         # check on the units rather than on running services - so what is
         # asserted is that the unit exists and says what the boot will ask it.
+        # systemctl cannot answer for a unit inside a chroot: it reports that it
+        # is ignoring the command and returns success having printed nothing, so
+        # the unit file is what is checked for.  The state below is a different
+        # question and one systemd does answer here, from the files alone.
+        test -s /usr/lib/systemd/system/serial-getty@.service
         systemctl cat serial-getty@ttyS0.service >/dev/null
         # The unit is instantiated by the systemd generator from
         # `console=ttyS0,115200` in the kernel command line, so it is static
@@ -334,20 +339,36 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # that had no unit to enable, would otherwise be an image that is only
         # reachable at the end of a serial cable.
         test -x /usr/sbin/sshd
+        test -s /usr/lib/systemd/system/ssh.service
         systemctl cat ssh.service >/dev/null
         ssh_state=$(systemctl is-enabled ssh.service 2>/dev/null || true)
         if [[ "$ssh_state" != enabled ]]; then
             echo "rootfs: ssh.service is not enabled (state: ${ssh_state:-unknown})" >&2
             exit 1
         fi
-        test -s /etc/systemd/system/ssh.service.d/10-jh7110-runtime-dir.conf
+        test -s /etc/systemd/system/ssh.service.d/10-jh7110.conf
         test -s /etc/ssh/sshd_config.d/90-jh7110.conf
+        # The image ships no host keys and sshd will not start without them, so
+        # the daemon is ordered after the unit that makes them on the first boot.
+        # Both are wanted by multi-user.target: without the ordering they start
+        # together, the daemon can reach its own start-up check first, exit with
+        # "no hostkeys available" - and a unit that exited that way is not
+        # restarted, so the board stays unreachable until someone reboots it.
+        grep -qx "After=jh7110-prepare.service" /etc/systemd/system/ssh.service.d/10-jh7110.conf
         # sshd refuses to parse a configuration it has no host key for, and the
         # image deliberately ships without them, so the check runs against a
         # rendered copy of the shipped configuration with one throwaway key.
         # What is validated is the file - the drop-in included, in the position
         # sshd reads it - and not the presence of the board keys, which
         # the first boot creates and which must not exist in the image.
+        #
+        # sshd also refuses to be checked without the privilege separation
+        # directory, and /run in a chroot that has never been booted is empty:
+        # on the board systemd makes that directory from the unit drop-in before
+        # sshd starts, and this makes it here so that the same configuration is
+        # validated in both places.  Nothing survives the build from it - /run is
+        # a tmpfs on the board and is mounted over whatever the image carries.
+        install -d -m 0755 /run/sshd
         sshd_check_dir=$(mktemp -d)
         ssh-keygen -q -t ed25519 -N "" -f "$sshd_check_dir/host_key" >/dev/null
         {
@@ -402,21 +423,6 @@ chroot "$rootfs_dir" /usr/bin/env -i \
             echo "rootfs: this image carries the name of the other board: $other_hostname" >&2
             exit 1
         fi
-        # The machine id and the SSH host keys belong to the board and to no
-        # other: created at build time they would be one identity shared by
-        # every board the image is written to, so the build removes them and
-        # the first boot creates them.  Both removals are steps that a change
-        # elsewhere can quietly undo, which is what this checks.
-        if [[ -s /etc/machine-id ]]; then
-            echo "rootfs: the image ships a machine id; it belongs on the board" >&2
-            exit 1
-        fi
-        for host_key in /etc/ssh/ssh_host_*; do
-            if [[ -e "$host_key" ]]; then
-                echo "rootfs: the image ships an SSH host key: $host_key" >&2
-                exit 1
-            fi
-        done
         test -s /usr/lib/xorg/modules/drivers/modesetting_drv.so
         test -s /usr/share/xsessions/xfce.desktop
         # The greeter runs the wrapper, and the wrapper execs the real greeter
@@ -540,7 +546,25 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # that differs between two builds of one commit with nothing behind
         # the difference.
         rm -f /var/cache/ldconfig/aux-cache
+        # Read back what the removals above are for.  The machine id and the
+        # SSH host keys belong to the board and to no other: made at build time
+        # they would be one identity shared by every board the image is written
+        # to, which is why they are removed here and created on the board by
+        # the first boot.  A removal that a change elsewhere quietly undid is
+        # exactly the kind of thing nothing else in this build would notice -
+        # openssh-server generates host keys when it is installed, so an image
+        # that kept them would look entirely normal and be one machine.
         apt-get clean
+        if [[ -s /etc/machine-id ]]; then
+            echo "rootfs: the image ships a machine id; it belongs on the board" >&2
+            exit 1
+        fi
+        for host_key in /etc/ssh/ssh_host_*; do
+            if [[ -e "$host_key" ]]; then
+                echo "rootfs: the image ships an SSH host key: $host_key" >&2
+                exit 1
+            fi
+        done
     '
 cleanup_qemu
 trap - EXIT

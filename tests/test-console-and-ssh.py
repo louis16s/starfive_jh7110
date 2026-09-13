@@ -24,9 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BACKEND = REPO / "rootfs/overlay/usr/libexec/jh7110-oobe-backend"
 SSHD_DROP_IN = REPO / "rootfs/overlay/etc/ssh/sshd_config.d/90-jh7110.conf"
-SSHD_UNIT_DROP_IN = (
-    REPO / "rootfs/overlay/etc/systemd/system/ssh.service.d/10-jh7110-runtime-dir.conf"
-)
+SSHD_UNIT_DROP_IN = REPO / "rootfs/overlay/etc/systemd/system/ssh.service.d/10-jh7110.conf"
 PACKAGE_LISTS = (
     "rootfs/packages/base.list",
     "rootfs/packages/desktop.list",
@@ -172,6 +170,31 @@ class SshConfigurationTests(unittest.TestCase):
         self.assertEqual(directives["RuntimeDirectory"], "sshd")
         self.assertEqual(directives["RuntimeDirectoryMode"], "0755")
 
+    def test_sshd_starts_after_the_unit_that_makes_its_host_keys(self):
+        # The image ships no host keys and sshd does not start without them, so
+        # the daemon has to be ordered after the first-boot unit that makes
+        # them.  Both are wanted by multi-user.target: started together, the
+        # daemon can reach its own start-up check first and exit with no host
+        # keys, and a unit that exited that way is not restarted - the board
+        # would be unreachable until someone rebooted it, which is exactly the
+        # "flash it and set the password up" path this image is for.
+        directives = ssh_directives(SSHD_UNIT_DROP_IN.read_text(encoding="utf-8"))
+        self.assertEqual(directives["After"], "jh7110-prepare.service")
+        # Ordered after the unit that makes the keys, and not merely waiting on
+        # it: the key generation is named in the unit the ordering names, so
+        # that the two statements are about the same thing.
+        prepare_unit = read("rootfs/overlay/etc/systemd/system/jh7110-prepare.service")
+        self.assertIn("ssh-keygen -A", read("rootfs/overlay/usr/libexec/jh7110-prepare"))
+        self.assertIn("ExecStart=/usr/libexec/jh7110-prepare", prepare_unit)
+        # And both the build and the tree verifier fail on a unit drop-in that
+        # lost the ordering.
+        self.assertIn("After=jh7110-prepare.service", read("scripts/build-rootfs.sh"))
+        self.assertIn("After=jh7110-prepare.service", read("scripts/verify-rootfs-login.sh"))
+        self.assertRegex(
+            read("scripts/verify-rootfs-login.sh"),
+            r"ssh\.service is not ordered after jh7110-prepare\.service",
+        )
+
     def test_the_build_fails_when_ssh_cannot_be_enabled(self):
         script = read("scripts/build-rootfs.sh")
         self.assertRegex(script, r"systemctl enable[^\n]*\bssh\b")
@@ -312,6 +335,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("verify-rootfs-login.sh", commands)
         needs = self.jobs["build"]["needs"]
         self.assertIn("rootfs-smoke", needs)
+
+    def test_the_build_reads_its_state_after_it_writes_it(self):
+        # Three checks in this block read state another part of the same block
+        # writes - the removals of the image's identities, and the privilege
+        # separation directory sshd insists on before it will parse anything.
+        # Each was written in the wrong place first, and each passed on the
+        # development host, where the block cannot run at all, and failed on the
+        # first CI run that could reach it.
+        script = read("scripts/build-rootfs.sh")
+        for check, before_it in (
+            ("the image ships a machine id", "rm -f /etc/machine-id"),
+            ("the image ships an SSH host key", "rm -f /etc/ssh/ssh_host_*"),
+            ("sshd -t -f", "install -d -m 0755 /run/sshd"),
+        ):
+            self.assertLess(
+                script.index(before_it),
+                script.index(check),
+                f"{check} is checked for before {before_it} has happened",
+            )
 
     def test_the_rootfs_build_checks_its_inputs_before_the_long_run(self):
         # mmdebstrap spends a quarter of an hour downloading and unpacking the
