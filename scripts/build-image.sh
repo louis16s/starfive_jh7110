@@ -236,6 +236,7 @@ digest = hashlib.sha256()
 counts = {'f': 0, 'd': 0, 'l': 0}
 entries = {}
 sizes = {}
+meta = {}
 SUBTREE_DEPTH = 2
 DEEPER = {'etc': 3, 'lib': 3, 'usr': 3, 'var': 3}
 MAX_SUBTREE_LINES = 1000
@@ -244,21 +245,25 @@ MAX_SUBTREE_LINES = 1000
 # whose bytes can follow the host that ran the tool, and a directory value
 # alone would only say which of them to look at next.  The list stays short on
 # purpose - it is the generated files whose generator is known to read a
-# directory or a clock, not every file dpkg did not write.
+# directory or a clock, not every file dpkg did not write.  The module lists
+# are under usr/lib in this rootfs: /lib is a symlink to it, so a pattern
+# written against the merged view matches nothing, which is how the two files
+# named here after the fact went unnamed in the first pair of runs.  A pattern
+# that names a file the image does not have prints no line, so a removal that
+# regressed would show up as one that came back.
 WATCHED = (
     'etc/ld.so.cache',
+    'etc/nvme/*',
     'etc/ssl/certs/ca-certificates.crt',
-    'var/lib/dpkg/status',
-    'var/cache/fontconfig/*',
+    'usr/lib/jh7110/*',
+    'usr/lib/modules/*/modules.*',
+    'usr/share/doc/linux-image-*/*',
+    'usr/share/glib-2.0/schemas/gschemas.compiled',
     'usr/share/icons/*/icon-theme.cache',
     'usr/share/mime/mime.cache',
-    'usr/share/glib-2.0/schemas/gschemas.compiled',
-    'lib/modules/*/modules.dep',
-    'lib/modules/*/modules.alias',
-    'lib/modules/*/modules.builtin',
-    'lib/modules/*/modules.softdep',
-    'lib/modules/*/modules.symbols',
-    'lib/modules/*/modules.devname',
+    'var/cache/fontconfig/*',
+    'var/cache/ldconfig/*',
+    'var/lib/dpkg/status',
 )
 
 
@@ -267,11 +272,16 @@ def header(kind, relative, info):
             f'{info.st_uid}:{info.st_gid}\0').encode()
 
 
+def record(relative, info):
+    meta[relative] = f'{info.st_mode:o} {info.st_uid}:{info.st_gid}'
+
+
 def entry(kind, relative, info, extra=b''):
     head = header(kind, relative, info)
     digest.update(head)
     digest.update(extra)
     entries[relative] = hashlib.sha256(head + extra)
+    record(relative, info)
 
 
 for dirpath, dirnames, filenames in os.walk(root):
@@ -302,6 +312,7 @@ for dirpath, dirnames, filenames in os.walk(root):
                     own.update(chunk)
             entries[relative] = own
             sizes[relative] = info.st_size
+            record(relative, info)
             counts['f'] += 1
         else:
             # A device node, fifo or socket in the tree: /dev is empty
@@ -339,8 +350,12 @@ for name in listed:
 for name in sorted(relative for relative in entries
                    if any(fnmatch.fnmatchcase(relative, pattern)
                           for pattern in WATCHED)):
-    print(f'build-image: rootfs payload file {name}: {sizes.get(name, 0)} bytes, '
-          f'sha256 {entries[name].hexdigest()}')
+    # The mode and the owner are printed next to the value because they are
+    # part of every record the value covers: without them a file whose
+    # permissions moved and one whose bytes moved read the same, and the two
+    # want different answers.
+    print(f'build-image: rootfs payload file {name}: {meta[name]} '
+          f'{sizes.get(name, 0)} bytes, sha256 {entries[name].hexdigest()}')
 print(f'build-image: rootfs payload: {counts["f"]} files, {counts["d"]} directories, '
       f'{counts["l"]} symlinks, sha256 {digest.hexdigest()}')
 PY

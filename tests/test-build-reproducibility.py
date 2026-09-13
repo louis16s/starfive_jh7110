@@ -412,7 +412,8 @@ class PayloadFingerprint(unittest.TestCase):
         for line in lines[:-1]:
             self.assertRegex(line,
                              r'^build-image: rootfs payload (subtree \S+: \d+ files, '
-                             r'\d+ bytes|file \S+: \d+ bytes), sha256 [0-9a-f]{64}$')
+                             r'\d+ bytes|file \S+: [0-7]+ \d+:\d+ \d+ bytes), '
+                             r'sha256 [0-9a-f]{64}$')
         return result.stdout.strip()
 
     def digest(self):
@@ -498,14 +499,41 @@ class PayloadFingerprint(unittest.TestCase):
         before = self.watched()
         self.assertEqual(sorted(before), ['usr/share/icons/Adwaita/icon-theme.cache',
                                           'var/cache/fontconfig/abcd-le64.cache-7'])
-        self.assertIn(': 4 bytes,', before['usr/share/icons/Adwaita/icon-theme.cache'])
-        self.assertIn(': 5 bytes,', before['var/cache/fontconfig/abcd-le64.cache-7'])
+        self.assertIn(' 4 bytes,', before['usr/share/icons/Adwaita/icon-theme.cache'])
+        self.assertIn(' 5 bytes,', before['var/cache/fontconfig/abcd-le64.cache-7'])
         self.write('var/cache/fontconfig/abcd-le64.cache-7', b'cachf')
         after = self.watched()
         self.assertEqual(after['usr/share/icons/Adwaita/icon-theme.cache'],
                          before['usr/share/icons/Adwaita/icon-theme.cache'])
         self.assertNotEqual(after['var/cache/fontconfig/abcd-le64.cache-7'],
                             before['var/cache/fontconfig/abcd-le64.cache-7'])
+
+    def test_a_watched_file_line_says_what_its_value_covers(self):
+        # The record a watched value is taken over holds the mode and the owner
+        # as well as the bytes, so both are printed beside it: without them a
+        # file whose permissions moved and one whose content moved read the
+        # same, and the two want different answers.
+        path = self.write('etc/ld.so.cache', b'cache')
+        path.chmod(0o644)
+        before = self.watched()['etc/ld.so.cache']
+        self.assertRegex(before,
+                         r'^build-image: rootfs payload file etc/ld\.so\.cache: '
+                         r'100644 \d+:\d+ 5 bytes, sha256 [0-9a-f]{64}$')
+        path.chmod(0o600)
+        after = self.watched()['etc/ld.so.cache']
+        self.assertNotEqual(after, before)
+        self.assertIn(' 100600 ', after)
+
+    def test_the_module_lists_are_named_where_they_are(self):
+        # The pattern is matched against the real path, and in a merged-usr
+        # rootfs the module tree is under usr/lib: /lib is a symlink to it, so
+        # a pattern written against the path a reader resolves it to matches
+        # nothing at all and prints no line.
+        self.write('usr/lib/modules/6.12.5+/modules.dep', b'kernel/drivers/x.ko:\n')
+        self.write('usr/lib/modules/6.12.5+/modules.alias', b'alias pci:v d x *\n')
+        self.assertEqual(sorted(self.watched()),
+                         ['usr/lib/modules/6.12.5+/modules.alias',
+                          'usr/lib/modules/6.12.5+/modules.dep'])
 
 
 class ImageIdentifiers(unittest.TestCase):

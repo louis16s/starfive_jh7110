@@ -402,7 +402,10 @@ in the same log which branch of the tree to look in. The per-directory lines
 carry the files and the bytes below them next to the digest, because a value
 that moved with both of those unchanged is a file rewritten in place - a cache
 whose bytes follow the order a tool walked the directory in - while one that
-moved with the size is a file whose content grew.
+moved with the size is a file whose content grew. The files the run names
+individually carry their mode and owner beside theirs for the same reason: a
+value there is taken over the record as well as the content, so without them a
+permission that moved and a byte that moved read alike.
 
 Several entries have come off the list of files a build inherits from the host
 it ran on. The journal, because a build that never journals the filesystem has
