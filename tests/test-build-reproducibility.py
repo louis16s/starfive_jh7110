@@ -377,6 +377,21 @@ class BuildWiring(unittest.TestCase):
         self.assertLess(text.index('PATH="$date_shim:$PATH"'),
                         text.index('bindeb-pkg'))
 
+    def test_kernel_packages_are_reported_by_their_own_digest(self):
+        # Pinning the packaging clock is half of it: what says whether two runs
+        # agreed on the packages is what the build prints about them, and
+        # nothing else prints these files - they are published beside the image
+        # rather than inside it, and the image's digest is not a comparison.
+        text = (ROOT / 'scripts/build-kernel.sh').read_text()
+        self.assertLess(text.index('bindeb-pkg'), text.index('*.changes'))
+        for suffix in ('*.deb', '*.buildinfo', '*.changes'):
+            with self.subTest(suffix=suffix):
+                self.assertIn(suffix, text)
+        # The format the two logs are compared on, spelled out rather than
+        # matched loosely: this line is the comparison.
+        self.assertIn("'kernel package: %s is %s bytes, sha256 %s\\n'", text)
+        self.assertIn('sha256sum "$package_file"', text)
+
     def test_gpu_package_pins_before_it_archives(self):
         # The helper only exports the environment, so it has to run before
         # dpkg-deb reads it; behind the --build call the package would quietly

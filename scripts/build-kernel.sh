@@ -184,6 +184,21 @@ for metadata_file in "${package_metadata[@]}"; do
     install -m 0644 "$metadata_file" "$package_dir/"
 done
 
+# What the packages came out as, by name and size and digest.  All three files
+# carry the changelog line the pinned date is in, and none of them can be
+# compared by looking at an image: they are not in it, only the tree unpacked
+# from one of them is - and that tree's bytes hold the kernel's inode and
+# directory-entry allocation decisions as well.  So two runs of one commit are
+# compared on what the build printed, which for these files is this.
+for package_file in "$package_dir"/*.deb "$package_dir"/*.buildinfo \
+                    "$package_dir"/*.changes; do
+    [[ -f "$package_file" ]] || continue
+    printf 'kernel package: %s is %s bytes, sha256 %s\n' \
+        "$(basename "$package_file")" \
+        "$(stat -c %s "$package_file")" \
+        "$(sha256sum "$package_file" | cut -d' ' -f1)"
+done
+
 dtb_path="$output_dir/arch/riscv/boot/dts/starfive/$KERNEL_DTB"
 [[ -f "$dtb_path" ]] || die "kernel build did not produce $KERNEL_DTB"
 
