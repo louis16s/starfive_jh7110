@@ -273,12 +273,41 @@ chroot "$rootfs_dir" /usr/bin/env -i \
         # smartd is useful when a SMART-capable disk is attached, but it is
         # not a boot prerequisite and exits noisily on SD/eMMC-only boards.
         # Keep smartmontools installed while leaving its daemon opt-in.
-        for service in smartmontools.service smartd.service; do
-            if systemctl cat "$service" >/dev/null 2>&1; then
-                # Leaving these enabled is the only thing that must not happen;
-                # a unit that is already absent or has no [Install] section is
-                # not a build failure.
-                systemctl disable "$service" >/dev/null 2>&1 || true
+        #
+        # systemd-networkd is the other unit this image wants off: it is a
+        # second network stack next to the NetworkManager the image ships,
+        # configures and writes /etc/resolv.conf for, and nothing asks for it
+        # but the preset fallthrough - no package enables it, and no .network
+        # file matches the ethernet on this board.  Left on it managed nothing and
+        # systemd-networkd-wait-online.service spent 120 seconds of every boot
+        # waiting for connectivity that never came, then failed.
+        #
+        # Neither of those is decided by disabling the unit here.  This image
+        # ships without /etc/machine-id on purpose, systemd reads a boot with
+        # no machine id as a first boot, and its preset pass rewrites the
+        # enabled state of every unit from the preset policy - on the board,
+        # after this build has finished.  What keeps them off is
+        # /etc/systemd/system-preset/50-jh7110.preset in the overlay.
+        #
+        # That is not a theory: an earlier version of this script disabled
+        # smartd here, removed the symlinks, read the state back, saw
+        # "disabled", and shipped an image where the first boot put them back
+        # and failed a unit on every boot of a board with no SMART device.
+        #
+        # The check below reads the state the next boot acts on, and it has to
+        # stand after the `preset-all` above, because that pass is the one the
+        # board repeats.  A preset file that went missing, or that named the
+        # wrong unit, leaves the unit enabled here and stops the build instead
+        # of the board.
+        for service in \
+            smartmontools.service smartd.service \
+            systemd-networkd.service systemd-networkd.socket \
+            systemd-networkd-wait-online.service
+        do
+            service_state=$(systemctl is-enabled "$service" 2>/dev/null || true)
+            if [[ $service_state == enabled* ]]; then
+                echo "rootfs: $service is still enabled" >&2
+                exit 1
             fi
         done
         # Validate target binaries and desktop payload before assembling an image.

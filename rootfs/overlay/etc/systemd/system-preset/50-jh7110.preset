@@ -1,0 +1,47 @@
+# Preset policy for this image.
+#
+# A preset file is the one place an "off" decision survives the first boot.
+# The image ships without /etc/machine-id on purpose - jh7110-prepare creates
+# one per board, so no two boards share an identity - and systemd reads a boot
+# with no machine id as a first boot: it runs a preset pass over /etc before
+# anything else starts, and that pass rewrites the enabled state of every unit
+# from the preset policy.  It happens on the board, after the build is long
+# finished, so a unit the build disabled by hand is enabled again the first
+# time the board boots.
+#
+# The policy is why the default answer is the wrong one.  A preset file names
+# the units the distribution wants switched on and says nothing about the rest,
+# and a unit that no rule matches is enabled.  An image that wants a unit off
+# therefore has to say so here; leaving it unnamed is the same as asking for
+# it.
+#
+# The name sorts before 90-systemd.preset, which is what it has to be: the
+# first rule that matches a unit is the one that counts.
+
+# smartd is useful when a SMART-capable disk is attached, but it is not a boot
+# prerequisite and it exits noisily on the SD/eMMC-only boards this image is
+# written to.  smartmontools stays installed; its daemon is opt-in.
+#
+# Nothing here is the package's doing: smartmontools' own postinst enables the
+# daemon, which is a deliberate default for a server and the wrong one for a
+# board whose only disk is the card it booted from.
+disable smartmontools.service
+
+# NetworkManager is the network stack this image ships, configures and writes
+# /etc/resolv.conf for, and it is the one the first-run setup drives over
+# D-Bus.  systemd-networkd is a second stack for the same job, and nothing
+# asks for it but the preset default above: no package enables it, and no
+# .network file matches this board's ethernet - the ethernet example in
+# /usr/lib/systemd/network is an .example, which does not load.  Left running
+# it manages nothing, and systemd-networkd-wait-online.service then waits for
+# connectivity that never arrives, times out after 120 seconds and fails, on
+# every boot, holding up everything ordered after network-online.target - while
+# NetworkManager-wait-online.service has the same target satisfied in seconds.
+#
+# systemd-networkd-persistent-storage.service is not named here because a
+# preset rule cannot reach it: it has no [Install] section, so it is static and
+# is pulled in by whatever pulls in networkd.  It is bound with
+# BindsTo=systemd-networkd.service, so it goes only where networkd goes.
+disable systemd-networkd.service
+disable systemd-networkd.socket
+disable systemd-networkd-wait-online.service

@@ -115,6 +115,56 @@ class BootConfig(unittest.TestCase):
         for package in ("kbd", "whiptail", "e2fsprogs", "cloud-guest-utils"):
             self.assertIn(package, read("rootfs/packages/base.list").splitlines())
 
+    def test_the_units_this_image_keeps_off_are_named_in_the_preset(self):
+        # The preset policy is the one place an "off" decision survives the
+        # first boot.  The image ships without /etc/machine-id on purpose -
+        # jh7110-prepare creates one per board - and systemd reads a boot with
+        # no machine id as a first boot: it runs a preset pass over /etc and
+        # rewrites the enabled state of every unit from the preset policy.  A
+        # unit that no rule matches is enabled, so an image that wants one off
+        # has to say so here; leaving it unnamed is the same as asking for it.
+        preset = "rootfs/overlay/etc/systemd/system-preset/50-jh7110.preset"
+        policy = read(preset)
+        # smartd exits noisily on the SD/eMMC-only boards this image is written
+        # to, and smartmontools' postinst enables it: a deliberate default for a
+        # server, the wrong one for a board whose only disk is the card it
+        # booted from.
+        self.assertIn("disable smartmontools.service", policy)
+        # NetworkManager is the stack this image ships, configures and writes
+        # /etc/resolv.conf for.  systemd-networkd is a second stack for the same
+        # job that no package asks for, and left on it manages nothing while its
+        # wait-online unit spends 120 seconds of every boot waiting for
+        # connectivity that never arrives, then fails.
+        for unit in (
+            "systemd-networkd.service",
+            "systemd-networkd.socket",
+            "systemd-networkd-wait-online.service",
+        ):
+            self.assertIn(f"disable {unit}", policy)
+        # The first rule that matches a unit is the one that counts, so this has
+        # to be read before systemd's own file.
+        self.assertLess(Path(preset).name, "90-systemd.preset")
+
+    def test_the_build_checks_the_state_the_first_boot_will_act_on(self):
+        # Disabling a unit in the build looks like it worked - the state reads
+        # back as disabled - and is undone by the first boot, which repeats the
+        # preset pass.  So the build does not disable anything; it checks, and
+        # the check has to stand after that pass.
+        rootfs = read("scripts/build-rootfs.sh")
+        check = rootfs.index("if [[ $service_state == enabled* ]]")
+        self.assertLess(rootfs.index("systemctl preset-all"), check)
+        # The units the pass has to leave off are the ones the check names.
+        for unit in (
+            "smartmontools.service",
+            "systemd-networkd.service",
+            "systemd-networkd.socket",
+            "systemd-networkd-wait-online.service",
+        ):
+            self.assertIn(unit, rootfs[:check])
+        # Removing the symlinks by hand looks like it worked here and is undone
+        # by the first boot, so nothing may be doing it.
+        self.assertNotIn("rm -f /etc/systemd/system/*.wants/", rootfs)
+
     def test_graphical_setup_is_the_first_run_path(self):
         # A board that has never been set up boots to the setup, not to a login
         # screen with no account behind it.  lightdm starts the wrapper, which
