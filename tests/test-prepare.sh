@@ -182,6 +182,10 @@ done
 exit 1
 STUB
 
+# The padding on PARTN is not decoration: lsblk right-aligns a numeric column,
+# so a real board hands the script " 2" rather than "2".  A stub that prints the
+# bare digit is a stub that cannot catch a caller which forgets to take $1, and
+# that is how a board shipped with an ungrown root filesystem once already.
 cat > "$sandbox/bin/lsblk" <<'STUB'
 #!/usr/bin/env bash
 while [[ $# -gt 0 ]]; do
@@ -189,7 +193,7 @@ while [[ $# -gt 0 ]]; do
         --output)
             case $2 in
                 PKNAME) printf 'sandboxdisk\n' ;;
-                PARTN) printf '1\n' ;;
+                PARTN) printf ' 1\n' ;;
             esac
             exit 0
             ;;
@@ -200,10 +204,19 @@ exit 1
 STUB
 
 # growpart exits 1 to say the partition already fills the disk, which for a
-# board that has been booted once is the normal case and not a failure.
+# board that has been booted once is the normal case and not a failure.  Before
+# it looks at the disk at all it refuses a partition number that is not one,
+# and the sandbox refuses it the same way: a stub that accepts " 1" is a stub
+# that reports a board it never grew as prepared.
 cat > "$sandbox/bin/growpart" <<'STUB'
 #!/usr/bin/env bash
 log-call growpart "$@"
+case ${2:-} in
+    '' | *[!0-9]*)
+        echo "FAILED: partition-number must be a number" >&2
+        exit 2
+        ;;
+esac
 exit "${GROWPART_STATUS:-0}"
 STUB
 

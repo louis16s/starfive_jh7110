@@ -132,8 +132,13 @@ fi
 # success for this step; anything else is a real failure.
 root_source=$(findmnt --noheadings --output SOURCE /)
 if [[ -b "$root_source" ]] && command -v growpart >/dev/null 2>&1; then
+    # Both fields are taken as $1.  A bare `print` would print the whole line,
+    # and lsblk pads the PARTN column, so the partition number would reach
+    # growpart as " 2" - which it refuses with "partition-number must be a
+    # number", leaving the root filesystem at whatever size the image was
+    # built with on a card that is much larger.
     parent_device=$(lsblk --noheadings --output PKNAME "$root_source" | awk 'NF { print "/dev/" $1; exit }')
-    partition_number=$(lsblk --noheadings --output PARTN "$root_source" | awk 'NF { print; exit }')
+    partition_number=$(lsblk --noheadings --output PARTN "$root_source" | awk 'NF { print $1; exit }')
     if [[ -n "$parent_device" && -n "$partition_number" ]]; then
         if growpart "$parent_device" "$partition_number"; then
             :
